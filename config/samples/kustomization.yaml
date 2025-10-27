@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- crl-operator_v1alpha1_managedcrl.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
