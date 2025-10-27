@@ -11,10 +11,22 @@ spec:
     kind: ManagedCRL
     listKind: ManagedCRLList
     plural: managedcrls
+    shortNames:
+    - mcrl
     singular: managedcrl
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.issuerRef.name
+      name: Issuer
+      type: string
+    - jsonPath: .status.crlValidUntil
+      name: Expires
+      type: string
+    - jsonPath: .status.crlNumber
+      name: CRL Number
+      type: integer
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: ManagedCRL is the Schema for the managedcrls API.
@@ -39,13 +51,149 @@ spec:
           spec:
             description: ManagedCRLSpec defines the desired state of ManagedCRL.
             properties:
-              foo:
-                description: Foo is an example field of ManagedCRL. Edit managedcrl_types.go
-                  to remove/update
+              duration:
+                description: |-
+                  Duration is the duration for which the CRL is valid.
+                  (default: 168h = 7 days)
                 type: string
+              issuerRef:
+                description: |-
+                  IssuerRef is a reference to the cert-manager Issuer or ClusterIssuer
+                  that will sign the CRL.
+                properties:
+                  group:
+                    description: |-
+                      Group of the issuer being referred to.
+                      Defaults to 'cert-manager.io'.
+                    type: string
+                  kind:
+                    description: |-
+                      Kind of the issuer being referred to.
+                      Defaults to 'Issuer'.
+                    type: string
+                  name:
+                    description: Name of the issuer being referred to.
+                    type: string
+                required:
+                - name
+                type: object
+              revocations:
+                description: Revocations is a list of certificates to be revoked.
+                items:
+                  description: RevocationSpec defines a certificate to be revoked.
+                  properties:
+                    reasonCode:
+                      description: Reason is the reason for revocation (refer to RFC
+                        5280 Section 5.3.1.).
+                      type: integer
+                    revocationTime:
+                      description: |-
+                        RevocationTime is the time at which the certificate was revoked.
+                        If not specified, the current time will be used.
+                      format: date-time
+                      type: string
+                    serialNumber:
+                      description: SerialNumber is the serial number of the certificate
+                        to be revoked.
+                      type: string
+                  required:
+                  - serialNumber
+                  type: object
+                type: array
+            required:
+            - issuerRef
             type: object
           status:
             description: ManagedCRLStatus defines the observed state of ManagedCRL.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              crlNumber:
+                description: CRLNumber is the number of the CRL.
+                format: int64
+                type: integer
+              crlValidUntil:
+                description: CRLValidUntil is the time until which the CRL is valid.
+                format: date-time
+                type: string
+              observedCASecretRef:
+                description: |-
+                  ObservedCASecretRef is a reference to the Secret containing the last
+                  CA certificate and private key used to sign the CRL.
+                properties:
+                  name:
+                    description: name is unique within a namespace to reference a
+                      secret resource.
+                    type: string
+                  namespace:
+                    description: namespace defines the space within which the secret
+                      name must be unique.
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              observedCASecretVersion:
+                description: |-
+                  ObservedCASecretVersion is the resource version of the Secret
+                  containing the last CA certificate and private key used to sign the CRL.
+                type: string
+              secretReady:
+                description: SecretReady indicates whether the CRL is built and available
+                  in the Secret.
+                type: boolean
             type: object
         type: object
     served: true
