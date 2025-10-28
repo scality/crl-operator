@@ -109,6 +109,16 @@ func init() {
 	SchemeBuilder.Register(&ManagedCRL{}, &ManagedCRLList{})
 }
 
+// GetSecret returns the name of the Secret used to store the CRL.
+func (mcrl *ManagedCRL) GetSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-crl", mcrl.Name),
+			Namespace: mcrl.Namespace,
+		},
+	}
+}
+
 func (mcrl *ManagedCRL) WithDefaults() {
 	mcrl.Spec.withDefaults()
 }
