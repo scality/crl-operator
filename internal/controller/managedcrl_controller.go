@@ -40,6 +40,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	crloperatorv1alpha1 "github.com/scality/crl-operator/api/v1alpha1"
+	"github.com/scality/crl-operator/internal"
 )
 
 const (
@@ -47,6 +48,17 @@ const (
 	renewBefore = 1 * time.Hour
 	// secretCRLKey is the key in the Secret data where the CRL is stored.
 	secretCRLKey = "ca.crl"
+
+	// Common labels
+	labelManagedByName  = "app.kubernetes.io/managed-by"
+	labelManagedByValue = "crl-operator"
+
+	labelComponentName  = "app.kubernetes.io/component"
+	labelComponentValue = "managed-crl"
+	labelAppName        = "app.kubernetes.io/name"
+	labelInstanceName   = "app.kubernetes.io/instance"
+
+	labelVersionName = "app.kubernetes.io/version"
 )
 
 // ManagedCRLReconciler reconciles a ManagedCRL object
@@ -192,21 +204,9 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
-		labels := secret.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		// Add default labels
-		labels["app.kubernetes.io/managed-by"] = "crl-operator"
-		labels["app.kubernetes.io/component"] = "managed-crl"
-		labels["app.kubernetes.io/name"] = secret.Name
-		labels["app.kubernetes.io/instance"] = instance.Name
-
-		secret.SetLabels(labels)
-
-		err := controllerutil.SetControllerReference(instance, secret, r.Scheme)
+		err := r.stdMutate(secret, instance)
 		if err != nil {
-			return fmt.Errorf("failed to set owner reference on Secret: %w", err)
+			return err
 		}
 
 		secret.Data = map[string][]byte{
@@ -405,6 +405,29 @@ func (r *ManagedCRLReconciler) crlNeedRenewal(currentCRL *x509.RevocationList, r
 
 	// Current CRL is valid, no need to renew
 	return false
+}
+
+// stdMutate applies the standard mutations to the managed resources
+// (The one we manage with `CreateOrUpdate`)
+func (r *ManagedCRLReconciler) stdMutate(obj metav1.Object, instance *crloperatorv1alpha1.ManagedCRL) error {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	// Add default labels
+	labels[labelManagedByName] = labelManagedByValue
+	labels[labelComponentName] = labelComponentValue
+	labels[labelAppName] = obj.GetName()
+	labels[labelInstanceName] = instance.Name
+	labels[labelVersionName] = internal.Version
+
+	obj.SetLabels(labels)
+
+	err := controllerutil.SetControllerReference(instance, obj, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to set owner reference on Secret: %w", err)
+	}
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
