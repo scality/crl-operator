@@ -17,8 +17,10 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -32,6 +34,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -216,6 +219,41 @@ func main() {
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// Create a field index for ClusterIssuer, Issuer and Secret references
+	// so that our CRL controller react to changes in those resources.
+	err = mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&crloperatorv1alpha1.ManagedCRL{},
+		"IssuerRef",
+		func(rawObj client.Object) []string {
+			mcrl := rawObj.(*crloperatorv1alpha1.ManagedCRL)
+			var indexKeys []string
+			switch mcrl.Spec.IssuerRef.Kind {
+			case "Issuer":
+				indexKeys = append(indexKeys, fmt.Sprintf("Issuer/%s/%s", mcrl.Namespace, mcrl.Spec.IssuerRef.Name))
+			case "ClusterIssuer":
+				indexKeys = append(indexKeys, fmt.Sprintf("ClusterIssuer/%s", mcrl.Spec.IssuerRef.Name))
+			default:
+				return nil
+			}
+
+			// Add a reference to the Secret containing the CA certificate and private key
+			// used to sign the CRL.
+			if mcrl.Status.ObservedCASecretRef != nil {
+				indexKeys = append(
+					indexKeys,
+					fmt.Sprintf("Secret/%s/%s", mcrl.Status.ObservedCASecretRef.Namespace, mcrl.Status.ObservedCASecretRef.Name),
+				)
+			}
+
+			return indexKeys
+		},
+	)
+	if err != nil {
+		setupLog.Error(err, "unable to create field index for IssuerRef")
+		os.Exit(1)
+	}
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")

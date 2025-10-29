@@ -36,6 +36,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	crloperatorv1alpha1 "github.com/scality/crl-operator/api/v1alpha1"
@@ -408,9 +409,57 @@ func (r *ManagedCRLReconciler) crlNeedRenewal(currentCRL *x509.RevocationList, r
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ManagedCRLReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	mapIssuerToCRL := func(ctx context.Context, obj client.Object) []ctrl.Request {
+		logger := logf.FromContext(ctx)
+		var indexKey string
+
+		switch obj := obj.(type) {
+		case *cmv1.Issuer:
+			indexKey = fmt.Sprintf("Issuer/%s/%s", obj.Namespace, obj.Name)
+		case *cmv1.ClusterIssuer:
+			indexKey = fmt.Sprintf("ClusterIssuer/%s", obj.Name)
+		case *corev1.Secret:
+			indexKey = fmt.Sprintf("Secret/%s/%s", obj.Namespace, obj.Name)
+		default:
+			logger.Error(nil, "unknown type in mapIssuerToCRL: %T", obj)
+			return nil
+		}
+
+		mcrlList := &crloperatorv1alpha1.ManagedCRLList{}
+		err := r.List(ctx, mcrlList, client.MatchingFields{
+			"IssuerRef": indexKey,
+		})
+		if err != nil {
+			logger.Error(err, "failed to list ManagedCRLs", "IssuerRef", indexKey)
+			return nil
+		}
+
+		requests := make([]ctrl.Request, 0, len(mcrlList.Items))
+		for _, mcrl := range mcrlList.Items {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: client.ObjectKey{
+					Name:      mcrl.Name,
+					Namespace: mcrl.Namespace,
+				},
+			})
+		}
+
+		if len(requests) > 0 {
+			logger.Info(
+				"Issuer/ClusterIssuer change detected, enqueueing ManagedCRLs",
+				"IssuerRef", indexKey,
+				"count", len(requests),
+			)
+		}
+		return requests
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&crloperatorv1alpha1.ManagedCRL{}).
 		Owns(&corev1.Secret{}).
+		Watches(&cmv1.ClusterIssuer{}, handler.EnqueueRequestsFromMapFunc(mapIssuerToCRL)).
+		Watches(&cmv1.Issuer{}, handler.EnqueueRequestsFromMapFunc(mapIssuerToCRL)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(mapIssuerToCRL)).
 		Named("managedcrl").
 		Complete(r)
 }
