@@ -23,11 +23,50 @@ import (
 	"strings"
 
 	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
+
+// ImageSpec defines information about the image to expose the CRL.
+type ImageSpec struct {
+	// Repository is the container image repository.
+	// +optional
+	Repository *string `json:"repository"`
+
+	// Name is the container image name.
+	// (default: "nginx")
+	// +optional
+	Name *string `json:"name"`
+
+	// Tag is the container image tag.
+	// (default: "1.29.3-alpine3.22")
+	// +optional
+	Tag *string `json:"tag"`
+
+	// PullSecretRef is a reference to a Secret containing the image pull
+	// credentials.
+	// +optional
+	PullSecrets []corev1.LocalObjectReference `json:"pullSecrets,omitempty"`
+}
+
+// CRLExposeSpec defines how the CRL should be exposed.
+type CRLExposeSpec struct {
+	// Enabled indicates whether the CRL should be exposed.
+	Enabled bool `json:"enabled"`
+
+	// Image specifies the container image to use for exposing the CRL.
+	// +optional
+	Image *ImageSpec `json:"image"`
+	// Node Selector to deploy the CRL server
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Tolerations to deploy the CRL server
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+}
 
 // RevocationSpec defines a certificate to be revoked.
 type RevocationSpec struct {
@@ -58,13 +97,19 @@ type ManagedCRLSpec struct {
 	// Revocations is a list of certificates to be revoked.
 	// +optional
 	Revocations []RevocationSpec `json:"revocations,omitempty"`
+
+	// Expose specifies how the CRL should be exposed.
+	// +optional
+	Expose *CRLExposeSpec `json:"expose,omitempty"`
 }
 
 // ManagedCRLStatus defines the observed state of ManagedCRL.
 type ManagedCRLStatus struct {
 	// SecretReady indicates whether the CRL is built and available in the Secret.
-	SecretReady *bool              `json:"secretReady,omitempty"`
-	Conditions  []metav1.Condition `json:"conditions,omitempty"`
+	SecretReady *bool `json:"secretReady,omitempty"`
+	// PodExposed indicates whether the CRL expose Pod is running.
+	PodExposed *bool              `json:"podExposed,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// CRLValidUntil is the time until which the CRL is valid.
 	CRLValidUntil metav1.Time `json:"crlValidUntil,omitempty"`
@@ -109,6 +154,11 @@ func init() {
 	SchemeBuilder.Register(&ManagedCRL{}, &ManagedCRLList{})
 }
 
+// IsExposed returns true if the CRL is configured to be exposed.
+func (mcrl *ManagedCRL) IsExposed() bool {
+	return mcrl.Spec.Expose != nil && mcrl.Spec.Expose.Enabled
+}
+
 // GetSecret returns the name of the Secret used to store the CRL.
 func (mcrl *ManagedCRL) GetSecret() *corev1.Secret {
 	return &corev1.Secret{
@@ -119,6 +169,37 @@ func (mcrl *ManagedCRL) GetSecret() *corev1.Secret {
 	}
 }
 
+// GetConfigMap returns the name of the ConfigMap used to configure the CRL expose Pod.
+func (mcrl *ManagedCRL) GetConfigMap() *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-server-config", mcrl.Name),
+			Namespace: mcrl.Namespace,
+		},
+	}
+}
+
+// GetDeployment returns the name of the Deployment used to expose the CRL.
+func (mcrl *ManagedCRL) GetDeployment() *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-server", mcrl.Name),
+			Namespace: mcrl.Namespace,
+		},
+	}
+}
+
+// GetService returns the name of the Service used to expose the CRL.
+func (mcrl *ManagedCRL) GetService() *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-server", mcrl.Name),
+			Namespace: mcrl.Namespace,
+		},
+	}
+}
+
+// WithDefaults sets default values on the ManagedCRL resource.
 func (mcrl *ManagedCRL) WithDefaults() {
 	mcrl.Spec.withDefaults()
 }
@@ -131,6 +212,10 @@ func (mcrls *ManagedCRLSpec) withDefaults() {
 	for i := range mcrls.Revocations {
 		mcrls.Revocations[i].withDefaults()
 	}
+
+	if mcrls.Expose != nil {
+		mcrls.Expose.withDefaults()
+	}
 }
 
 func (rs *RevocationSpec) withDefaults() {
@@ -139,6 +224,22 @@ func (rs *RevocationSpec) withDefaults() {
 	}
 	if rs.ReasonCode == nil {
 		rs.ReasonCode = ptr.To(0) // Unspecified
+	}
+}
+
+func (ces *CRLExposeSpec) withDefaults() {
+	if ces.Image == nil {
+		ces.Image = &ImageSpec{}
+	}
+	ces.Image.withDefaults()
+}
+
+func (is *ImageSpec) withDefaults() {
+	if is.Name == nil {
+		is.Name = ptr.To("nginx")
+	}
+	if is.Tag == nil {
+		is.Tag = ptr.To("1.29.3-alpine3.22")
 	}
 }
 
@@ -179,6 +280,15 @@ func (mcrls *ManagedCRLSpec) GetRevokedListEntries() ([]x509.RevocationListEntry
 	return revokedCerts, nil
 }
 
+// GetImage returns the full image string in the format "repository/name:tag".
+func (is *ImageSpec) GetImage() string {
+	image := fmt.Sprintf("%s:%s", *is.Name, *is.Tag)
+	if is.Repository != nil {
+		image = fmt.Sprintf("%s/%s", *is.Repository, image)
+	}
+	return image
+}
+
 // SetSecretReady sets the ManagedCRL status to SecretReady.
 func (mcrl *ManagedCRL) SetSecretReady() {
 	condition := metav1.Condition{
@@ -205,4 +315,32 @@ func (mcrl *ManagedCRL) SetSecretNotReady(reason, message string) {
 	}
 	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
 	mcrl.Status.SecretReady = ptr.To(false)
+}
+
+// SetPodExposed sets the ManagedCRL status to PodExposed.
+func (mcrl *ManagedCRL) SetPodExposed() {
+	condition := metav1.Condition{
+		Type:               "PodExposed",
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "CRLPodExposed",
+		Message:            "The pod exposing the CRL is running",
+		ObservedGeneration: mcrl.Generation,
+	}
+	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
+	mcrl.Status.PodExposed = ptr.To(true)
+}
+
+// SetPodNotExposed sets the ManagedCRL status to PodNotExposed with the given reason and message.
+func (mcrl *ManagedCRL) SetPodNotExposed(reason, message string) {
+	condition := metav1.Condition{
+		Type:               "PodExposed",
+		Status:             metav1.ConditionFalse,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: mcrl.Generation,
+	}
+	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
+	mcrl.Status.PodExposed = ptr.To(false)
 }

@@ -29,10 +29,13 @@ import (
 
 	cmv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -41,6 +44,7 @@ import (
 
 	crloperatorv1alpha1 "github.com/scality/crl-operator/api/v1alpha1"
 	"github.com/scality/crl-operator/internal"
+	"github.com/scality/crl-operator/internal/utils"
 )
 
 const (
@@ -59,6 +63,24 @@ const (
 	labelInstanceName   = "app.kubernetes.io/instance"
 
 	labelVersionName = "app.kubernetes.io/version"
+
+	// server configuration
+	nginxConfig = `
+server {
+  listen 8080;
+  server_name _;
+
+  location = /ca.crl {
+    root /srv;
+
+    types { }
+    default_type application/pkix-crl;
+  }
+
+	location / {
+		return 404;
+	}
+}`
 )
 
 // ManagedCRLReconciler reconciles a ManagedCRL object
@@ -73,7 +95,9 @@ type ManagedCRLReconciler struct {
 // +kubebuilder:rbac:groups=crl-operator.scality.com,resources=managedcrls/finalizers,verbs=update
 
 // +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps;secrets;services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -109,8 +133,23 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}()
 
 	// Simple helper to handle errors and update status
+	// Create variable to track what need to be set unavailable
+	secretReady := false
+	podReady := false
 	handleError := func(err error, reason, message string) (ctrl.Result, error) { // nolint:unparam // It's clearer
-		instance.SetSecretNotReady(reason, message)
+		nextReason := reason
+		nextMessage := message
+
+		if !secretReady {
+			instance.SetSecretNotReady(nextReason, nextMessage)
+			nextReason = "SecretNotReady"
+			nextMessage = "secret is not ready"
+		}
+		if instance.IsExposed() && !podReady {
+			instance.SetPodNotExposed(nextReason, nextMessage)
+			nextReason = "PodNotExposed"
+			nextMessage = "pod is not exposed"
+		}
 		logger.Error(err, message)
 		return ctrl.Result{}, fmt.Errorf("%s: %w", message, err)
 	}
@@ -235,6 +274,165 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	instance.Status.ObservedCASecretVersion = caSecret.ResourceVersion
 
 	instance.SetSecretReady()
+	secretReady = true
+
+	// Handle expose if specified
+	if instance.IsExposed() {
+		// Handle server Configuration
+		cm := instance.GetConfigMap()
+		op, err = controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
+			err := r.stdMutate(cm, instance)
+			if err != nil {
+				return err
+			}
+
+			cm.Data = map[string]string{
+				"default.conf": nginxConfig,
+			}
+			return nil
+		})
+		if err != nil {
+			return handleError(
+				err,
+				"FailedToCreateOrUpdateServerConfigMap",
+				"failed to create or update ConfigMap for the server",
+			)
+		}
+		if op != controllerutil.OperationResultNone {
+			logger.Info("ConfigMap for the server reconciled", "operation", op)
+		}
+
+		// Handle Deployment for the server
+		selector := map[string]string{
+			labelAppName:      instance.Name,
+			labelInstanceName: instance.Name,
+		}
+		deploy := instance.GetDeployment()
+		op, err = controllerutil.CreateOrUpdate(ctx, r.Client, deploy, func() error {
+			err := r.stdMutate(deploy, instance)
+			if err != nil {
+				return err
+			}
+
+			// Add selector labels
+			utils.UpdateLabels(&deploy.Spec.Template.ObjectMeta, selector)
+			deploy.Spec.Selector = &metav1.LabelSelector{
+				MatchLabels: selector,
+			}
+
+			// Add replicas
+			deploy.Spec.Replicas = ptr.To[int32](2)
+
+			// Add NodeSelector and Tolerations and ImagePullSecrets
+			deploy.Spec.Template.Spec.NodeSelector = instance.Spec.Expose.NodeSelector
+			deploy.Spec.Template.Spec.Tolerations = instance.Spec.Expose.Tolerations
+			deploy.Spec.Template.Spec.ImagePullSecrets = instance.Spec.Expose.Image.PullSecrets
+
+			// Add volumes
+			deploy.Spec.Template.Spec.Volumes = []corev1.Volume{
+				{
+					Name: "config",
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: cm.GetName(),
+							},
+						},
+					},
+				}, {
+					Name: "crl",
+					VolumeSource: corev1.VolumeSource{
+						Secret: &corev1.SecretVolumeSource{
+							SecretName: secret.GetName(),
+						},
+					},
+				},
+			}
+
+			// If we have more than 1 container we clean up the containers list
+			if len(deploy.Spec.Template.Spec.Containers) != 1 {
+				deploy.Spec.Template.Spec.Containers = []corev1.Container{{}}
+			}
+			container := &deploy.Spec.Template.Spec.Containers[0]
+
+			// Handle container definition
+			container.Name = "server"
+			container.Image = instance.Spec.Expose.Image.GetImage()
+			container.Ports = []corev1.ContainerPort{
+				{
+					Name:          "http",
+					ContainerPort: 8080,
+				},
+			}
+			container.VolumeMounts = []corev1.VolumeMount{
+				{
+					Name:      "config",
+					MountPath: "/etc/nginx/conf.d/default.conf",
+					SubPath:   "default.conf",
+					ReadOnly:  true,
+				}, {
+					Name:      "crl",
+					MountPath: "/srv/",
+					ReadOnly:  true,
+				},
+			}
+
+			return nil
+		})
+		if err != nil {
+			return handleError(
+				err,
+				"FailedToCreateOrUpdateServerDeployment",
+				"failed to create or update Deployment for the server",
+			)
+		}
+		if op != controllerutil.OperationResultNone {
+			logger.Info("Deployment for the server reconciled", "operation", op)
+		}
+
+		// Handle Service for the server
+		svc := instance.GetService()
+		op, err = controllerutil.CreateOrUpdate(ctx, r.Client, svc, func() error {
+			err := r.stdMutate(svc, instance)
+			if err != nil {
+				return err
+			}
+
+			svc.Spec.Selector = selector
+			svc.Spec.Ports = []corev1.ServicePort{
+				{
+					Name:       "http",
+					Port:       80,
+					TargetPort: intstr.FromInt(8080),
+				},
+			}
+			svc.Spec.Type = corev1.ServiceTypeClusterIP
+
+			return nil
+		})
+		if err != nil {
+			return handleError(
+				err,
+				"FailedToCreateOrUpdateServerService",
+				"failed to create or update Service for the server",
+			)
+		}
+		if op != controllerutil.OperationResultNone {
+			logger.Info("Service for the server reconciled", "operation", op)
+		}
+
+		// Check if the Deployment is ready
+		if deploy.Status.ReadyReplicas != deploy.Status.Replicas || deploy.Status.ReadyReplicas == 0 {
+			return handleError(
+				errors.New("deployment not ready"),
+				"ServerPodNotReady",
+				"server pod is not ready",
+			)
+		}
+
+		instance.SetPodExposed()
+		podReady = true
+	}
 
 	// All good
 	// We still have to requeue before expiry to renew the CRL
@@ -410,18 +608,13 @@ func (r *ManagedCRLReconciler) crlNeedRenewal(currentCRL *x509.RevocationList, r
 // stdMutate applies the standard mutations to the managed resources
 // (The one we manage with `CreateOrUpdate`)
 func (r *ManagedCRLReconciler) stdMutate(obj metav1.Object, instance *crloperatorv1alpha1.ManagedCRL) error {
-	labels := obj.GetLabels()
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	// Add default labels
-	labels[labelManagedByName] = labelManagedByValue
-	labels[labelComponentName] = labelComponentValue
-	labels[labelAppName] = obj.GetName()
-	labels[labelInstanceName] = instance.Name
-	labels[labelVersionName] = internal.Version
-
-	obj.SetLabels(labels)
+	utils.UpdateLabels(obj, map[string]string{
+		labelManagedByName: labelManagedByValue,
+		labelComponentName: labelComponentValue,
+		labelAppName:       obj.GetName(),
+		labelInstanceName:  instance.Name,
+		labelVersionName:   internal.Version,
+	})
 
 	err := controllerutil.SetControllerReference(instance, obj, r.Scheme)
 	if err != nil {
@@ -480,6 +673,9 @@ func (r *ManagedCRLReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&crloperatorv1alpha1.ManagedCRL{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
 		Watches(&cmv1.ClusterIssuer{}, handler.EnqueueRequestsFromMapFunc(mapIssuerToCRL)).
 		Watches(&cmv1.Issuer{}, handler.EnqueueRequestsFromMapFunc(mapIssuerToCRL)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(mapIssuerToCRL)).

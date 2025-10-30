@@ -56,6 +56,98 @@ spec:
                   Duration is the duration for which the CRL is valid.
                   (default: 168h = 7 days)
                 type: string
+              expose:
+                description: Expose specifies how the CRL should be exposed.
+                properties:
+                  enabled:
+                    description: Enabled indicates whether the CRL should be exposed.
+                    type: boolean
+                  image:
+                    description: Image specifies the container image to use for exposing
+                      the CRL.
+                    properties:
+                      name:
+                        description: |-
+                          Name is the container image name.
+                          (default: "nginx")
+                        type: string
+                      pullSecrets:
+                        description: |-
+                          PullSecretRef is a reference to a Secret containing the image pull
+                          credentials.
+                        items:
+                          description: |-
+                            LocalObjectReference contains enough information to let you locate the
+                            referenced object inside the same namespace.
+                          properties:
+                            name:
+                              default: ""
+                              description: |-
+                                Name of the referent.
+                                This field is effectively required, but due to backwards compatibility is
+                                allowed to be empty. Instances of this type with an empty value here are
+                                almost certainly wrong.
+                                More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                              type: string
+                          type: object
+                          x-kubernetes-map-type: atomic
+                        type: array
+                      repository:
+                        description: Repository is the container image repository.
+                        type: string
+                      tag:
+                        description: |-
+                          Tag is the container image tag.
+                          (default: "1.29.3-alpine3.22")
+                        type: string
+                    type: object
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: Node Selector to deploy the CRL server
+                    type: object
+                  tolerations:
+                    description: Tolerations to deploy the CRL server
+                    items:
+                      description: |-
+                        The pod this Toleration is attached to tolerates any taint that matches
+                        the triple <key,value,effect> using the matching operator <operator>.
+                      properties:
+                        effect:
+                          description: |-
+                            Effect indicates the taint effect to match. Empty means match all taint effects.
+                            When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: |-
+                            Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                            If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                          type: string
+                        operator:
+                          description: |-
+                            Operator represents a key's relationship to the value.
+                            Valid operators are Exists and Equal. Defaults to Equal.
+                            Exists is equivalent to wildcard for value, so that a pod can
+                            tolerate all taints of a particular category.
+                          type: string
+                        tolerationSeconds:
+                          description: |-
+                            TolerationSeconds represents the period of time the toleration (which must be
+                            of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                            it is not set, which means tolerate the taint forever (do not evict). Zero and
+                            negative values will be treated as 0 (evict immediately) by the system.
+                          format: int64
+                          type: integer
+                        value:
+                          description: |-
+                            Value is the taint value the toleration matches to.
+                            If the operator is Exists, the value should be empty, otherwise just a regular string.
+                          type: string
+                      type: object
+                    type: array
+                required:
+                - enabled
+                type: object
               issuerRef:
                 description: |-
                   IssuerRef is a reference to the cert-manager Issuer or ClusterIssuer
@@ -190,6 +282,9 @@ spec:
                   ObservedCASecretVersion is the resource version of the Secret
                   containing the last CA certificate and private key used to sign the CRL.
                 type: string
+              podExposed:
+                description: PodExposed indicates whether the CRL expose Pod is running.
+                type: boolean
               secretReady:
                 description: SecretReady indicates whether the CRL is built and available
                   in the Secret.
