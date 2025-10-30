@@ -104,6 +104,48 @@ spec:
                         minLength: 1
                         type: string
                     type: object
+                  ingress:
+                    description: |-
+                      Ingress indicates whether the CRL should be exposed externally outside the cluster
+                      using an Ingress resource.
+                      (default: Disabled)
+                    properties:
+                      className:
+                        description: ClassName is the ingress class name to use for
+                          the ingress.
+                        type: string
+                      enabled:
+                        description: |-
+                          Enabled indicates whether to create an Ingress resource to expose the CRL.
+                          (default: true)
+                        type: boolean
+                      hostname:
+                        description: |-
+                          Hostname is the hostname to use for the ingress.
+                          (One of Hostname or IPAddresses must be specified)
+                        minLength: 1
+                        type: string
+                      ipAddresses:
+                        description: |-
+                          IPAddresses is a list of IP addresses to use for the ingress.
+                          (One of Hostname or IPAddresses must be specified)
+                        items:
+                          format: ipv4
+                          type: string
+                        type: array
+                      managed:
+                        description: |-
+                          Managed indicates whether the operator should manage the Ingress resource.
+                          If false, the Ingress resource will not be created or updated by the operator.
+                          (default: true)
+                        type: boolean
+                    type: object
+                  internal:
+                    description: |-
+                      Internal indicates whether the issuer should be configured to reach the
+                      CRL internally within the cluster.
+                      (default: true)
+                    type: boolean
                   nodeSelector:
                     additionalProperties:
                       type: string
@@ -266,6 +308,13 @@ spec:
                 description: CRLValidUntil is the time until which the CRL is valid.
                 format: date-time
                 type: string
+              ingressExposed:
+                description: IngressExposed indicates whether the CRL Ingress is available.
+                type: boolean
+              issuerConfigured:
+                description: IssuerConfigured indicates whether the Issuer is properly
+                  configured.
+                type: boolean
               observedCASecretRef:
                 description: |-
                   ObservedCASecretRef is a reference to the Secret containing the last

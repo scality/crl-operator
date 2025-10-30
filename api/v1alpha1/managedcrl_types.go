@@ -25,10 +25,14 @@ import (
 	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 )
+
+// +kubebuilder:validation:Format=ipv4
+type IPAddress string
 
 // ImageSpec defines information about the image to expose the CRL.
 type ImageSpec struct {
@@ -55,6 +59,35 @@ type ImageSpec struct {
 	PullSecrets []corev1.LocalObjectReference `json:"pullSecrets,omitempty"`
 }
 
+// IngressSpec defines the ingress configuration for exposing the CRL.
+type IngressSpec struct {
+	// Enabled indicates whether to create an Ingress resource to expose the CRL.
+	// (default: true)
+	// +optional
+	Enabled *bool `json:"enabled"`
+
+	// Managed indicates whether the operator should manage the Ingress resource.
+	// If false, the Ingress resource will not be created or updated by the operator.
+	// (default: true)
+	// +optional
+	Managed *bool `json:"managed"`
+
+	// Hostname is the hostname to use for the ingress.
+	// (One of Hostname or IPAddresses must be specified)
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Hostname *string `json:"hostname,omitempty"`
+
+	// ClassName is the ingress class name to use for the ingress.
+	// +optional
+	ClassName *string `json:"className,omitempty"`
+
+	// IPAddresses is a list of IP addresses to use for the ingress.
+	// (One of Hostname or IPAddresses must be specified)
+	// +optional
+	IPAddresses []IPAddress `json:"ipAddresses,omitempty"`
+}
+
 // CRLExposeSpec defines how the CRL should be exposed.
 type CRLExposeSpec struct {
 	// Enabled indicates whether the CRL should be exposed.
@@ -69,6 +102,18 @@ type CRLExposeSpec struct {
 	// Tolerations to deploy the CRL server
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// Internal indicates whether the issuer should be configured to reach the
+	// CRL internally within the cluster.
+	// (default: true)
+	// +optional
+	Internal *bool `json:"internal"`
+
+	// Ingress indicates whether the CRL should be exposed externally outside the cluster
+	// using an Ingress resource.
+	// (default: Disabled)
+	// +optional
+	Ingress *IngressSpec `json:"ingress"`
 }
 
 // RevocationSpec defines a certificate to be revoked.
@@ -112,8 +157,12 @@ type ManagedCRLStatus struct {
 	// SecretReady indicates whether the CRL is built and available in the Secret.
 	SecretReady *bool `json:"secretReady,omitempty"`
 	// PodExposed indicates whether the CRL expose Pod is running.
-	PodExposed *bool              `json:"podExposed,omitempty"`
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	PodExposed *bool `json:"podExposed,omitempty"`
+	// IngressExposed indicates whether the CRL Ingress is available.
+	IngressExposed *bool `json:"ingressExposed,omitempty"`
+	// IssuerConfigured indicates whether the Issuer is properly configured.
+	IssuerConfigured *bool              `json:"issuerConfigured,omitempty"`
+	Conditions       []metav1.Condition `json:"conditions,omitempty"`
 
 	// CRLValidUntil is the time until which the CRL is valid.
 	CRLValidUntil metav1.Time `json:"crlValidUntil,omitempty"`
@@ -163,6 +212,21 @@ func (mcrl *ManagedCRL) IsExposed() bool {
 	return mcrl.Spec.Expose != nil && mcrl.Spec.Expose.Enabled
 }
 
+// IsIngressEnabled returns true if the CRL is configured to be exposed via Ingress.
+func (mcrl *ManagedCRL) IsIngressEnabled() bool {
+	return mcrl.IsExposed() && mcrl.Spec.Expose.Ingress != nil && *mcrl.Spec.Expose.Ingress.Enabled
+}
+
+// IsIngressManaged returns true if the Ingress is managed by the operator.
+func (mcrl *ManagedCRL) IsIngressManaged() bool {
+	return mcrl.IsIngressEnabled() && mcrl.Spec.Expose.Ingress.Managed != nil && *mcrl.Spec.Expose.Ingress.Managed
+}
+
+// IsInternalEnabled returns true if the CRL is configured to be exposed internally.
+func (mcrl *ManagedCRL) IsInternalEnabled() bool {
+	return mcrl.IsExposed() && mcrl.Spec.Expose.Internal != nil && *mcrl.Spec.Expose.Internal
+}
+
 // GetSecret returns the name of the Secret used to store the CRL.
 func (mcrl *ManagedCRL) GetSecret() *corev1.Secret {
 	return &corev1.Secret{
@@ -203,6 +267,16 @@ func (mcrl *ManagedCRL) GetService() *corev1.Service {
 	}
 }
 
+// GetIngress returns the name of the Ingress used to expose the CRL.
+func (mcrl *ManagedCRL) GetIngress() *networkingv1.Ingress {
+	return &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      fmt.Sprintf("%s-server", mcrl.Name),
+			Namespace: mcrl.Namespace,
+		},
+	}
+}
+
 // WithDefaults sets default values on the ManagedCRL resource.
 func (mcrl *ManagedCRL) WithDefaults() {
 	mcrl.Spec.withDefaults()
@@ -236,6 +310,14 @@ func (ces *CRLExposeSpec) withDefaults() {
 		ces.Image = &ImageSpec{}
 	}
 	ces.Image.withDefaults()
+
+	if ces.Ingress != nil {
+		ces.Ingress.withDefaults()
+	}
+
+	if ces.Internal == nil {
+		ces.Internal = ptr.To(true)
+	}
 }
 
 func (is *ImageSpec) withDefaults() {
@@ -244,6 +326,15 @@ func (is *ImageSpec) withDefaults() {
 	}
 	if is.Tag == nil {
 		is.Tag = ptr.To("1.29.3-alpine3.22")
+	}
+}
+
+func (is *IngressSpec) withDefaults() {
+	if is.Enabled == nil {
+		is.Enabled = ptr.To(true)
+	}
+	if is.Managed == nil {
+		is.Managed = ptr.To(true)
 	}
 }
 
@@ -304,11 +395,31 @@ func (ces *CRLExposeSpec) validate() error {
 	if err != nil {
 		return fmt.Errorf("invalid image configuration: %w", err)
 	}
+
+	if ces.Ingress != nil {
+		err := ces.Ingress.validate()
+		if err != nil {
+			return fmt.Errorf("invalid ingress configuration: %w", err)
+		}
+	}
+
 	return nil
 }
 
 func (is *ImageSpec) validate() error {
 	// Nothing to validate for now
+	return nil
+}
+
+func (is *IngressSpec) validate() error {
+	if !*is.Enabled {
+		return nil
+	}
+
+	if is.Hostname == nil && len(is.IPAddresses) == 0 {
+		return fmt.Errorf("either hostname or ipAddresses must be specified")
+	}
+
 	return nil
 }
 
@@ -356,6 +467,33 @@ func (is *ImageSpec) GetImage() string {
 		image = fmt.Sprintf("%s/%s", *is.Repository, image)
 	}
 	return image
+}
+
+// GetCRLDistributionPoint returns the CRL distribution point URL based on the Ingress configuration.
+func (mcrl *ManagedCRL) GetCRLDistributionPoint() []string {
+	var urls []string
+
+	// Add Ingress URLs if enabled
+	if mcrl.IsIngressEnabled() {
+		if mcrl.Spec.Expose.Ingress.Hostname != nil {
+			urls = append(urls, fmt.Sprintf("http://%s/ca.crl", *mcrl.Spec.Expose.Ingress.Hostname))
+		}
+		for _, ip := range mcrl.Spec.Expose.Ingress.IPAddresses {
+			urls = append(urls, fmt.Sprintf("http://%s/ca.crl", ip))
+		}
+	}
+
+	// Add internal URL if enabled
+	if mcrl.IsInternalEnabled() {
+		urls = append(urls, fmt.Sprintf("http://%s.%s.svc/ca.crl", mcrl.GetName(), mcrl.GetNamespace()))
+	}
+
+	return urls
+}
+
+// NeedsIssuerConfiguration returns true if the Issuer needs to be configured.
+func (mcrl *ManagedCRL) NeedsIssuerConfiguration() bool {
+	return len(mcrl.GetCRLDistributionPoint()) > 0
 }
 
 // SetSecretReady sets the ManagedCRL status to SecretReady.
@@ -412,4 +550,60 @@ func (mcrl *ManagedCRL) SetPodNotExposed(reason, message string) {
 	}
 	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
 	mcrl.Status.PodExposed = ptr.To(false)
+}
+
+// SetIngressExposed sets the ManagedCRL status to IngressExposed.
+func (mcrl *ManagedCRL) SetIngressExposed() {
+	condition := metav1.Condition{
+		Type:               "IngressExposed",
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "CRLIngressExposed",
+		Message:            "The ingress exposing the CRL is available",
+		ObservedGeneration: mcrl.Generation,
+	}
+	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
+	mcrl.Status.IngressExposed = ptr.To(true)
+}
+
+// SetIngressNotExposed sets the ManagedCRL status to IngressNotExposed with the given reason and message.
+func (mcrl *ManagedCRL) SetIngressNotExposed(reason, message string) {
+	condition := metav1.Condition{
+		Type:               "IngressExposed",
+		Status:             metav1.ConditionFalse,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: mcrl.Generation,
+	}
+	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
+	mcrl.Status.IngressExposed = ptr.To(false)
+}
+
+// SetIssuerConfigured sets the ManagedCRL status to IssuerConfigured.
+func (mcrl *ManagedCRL) SetIssuerConfigured() {
+	condition := metav1.Condition{
+		Type:               "IssuerConfigured",
+		Status:             metav1.ConditionTrue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             "CRLIssuerConfigured",
+		Message:            "The issuer is properly configured",
+		ObservedGeneration: mcrl.Generation,
+	}
+	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
+	mcrl.Status.IssuerConfigured = ptr.To(true)
+}
+
+// SetIssuerNotConfigured sets the ManagedCRL status to IssuerNotConfigured with the given reason and message.
+func (mcrl *ManagedCRL) SetIssuerNotConfigured(reason, message string) {
+	condition := metav1.Condition{
+		Type:               "IssuerConfigured",
+		Status:             metav1.ConditionFalse,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+		ObservedGeneration: mcrl.Generation,
+	}
+	meta.SetStatusCondition(&mcrl.Status.Conditions, condition)
+	mcrl.Status.IssuerConfigured = ptr.To(false)
 }

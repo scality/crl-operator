@@ -31,6 +31,7 @@ import (
 	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -94,7 +95,7 @@ type ManagedCRLReconciler struct {
 // +kubebuilder:rbac:groups=crl-operator.scality.com,resources=managedcrls/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=crl-operator.scality.com,resources=managedcrls/finalizers,verbs=update
 
-// +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get;list;watch
+// +kubebuilder:rbac:groups=cert-manager.io,resources=issuers;clusterissuers,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="",resources=configmaps;secrets;services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
@@ -139,6 +140,7 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Create variable to track what need to be set unavailable
 	secretReady := false
 	podReady := false
+	ingressReady := false
 	handleError := func(err error, reason, message string) (ctrl.Result, error) { // nolint:unparam // It's clearer
 		nextReason := reason
 		nextMessage := message
@@ -153,6 +155,15 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			nextReason = "PodNotExposed"
 			nextMessage = "pod is not exposed"
 		}
+		if instance.IsIngressManaged() && !ingressReady {
+			instance.SetIngressNotExposed(nextReason, nextMessage)
+			nextReason = "IngressNotExposed"
+			nextMessage = "ingress is not exposed"
+		}
+		if instance.NeedsIssuerConfiguration() {
+			instance.SetIssuerNotConfigured(nextReason, nextMessage)
+		}
+
 		logger.Error(err, message)
 		return ctrl.Result{}, fmt.Errorf("%s: %w", message, err)
 	}
@@ -177,7 +188,15 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Get the Secret containing the CA certificate and private key
-	caSecret, err := r.getIssuerSecret(ctx, instance.Namespace, instance.Spec.IssuerRef)
+	issuer, err := r.getIssuer(ctx, instance.Namespace, instance.Spec.IssuerRef)
+	if err != nil {
+		return handleError(
+			err,
+			"FailedToGetIssuer",
+			"failed to get issuer",
+		)
+	}
+	caSecret, err := r.getIssuerSecret(ctx, instance.Namespace, issuer)
 	if err != nil {
 		return handleError(
 			err,
@@ -435,6 +454,96 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		instance.SetPodExposed()
 		podReady = true
+
+		// Handle Ingress if enabled
+		if instance.IsIngressManaged() {
+			ingress := instance.GetIngress()
+			op, err = controllerutil.CreateOrUpdate(ctx, r.Client, ingress, func() error {
+				err := r.stdMutate(ingress, instance)
+				if err != nil {
+					return err
+				}
+
+				ingress.Spec.IngressClassName = instance.Spec.Expose.Ingress.ClassName
+
+				ingressRule := &networkingv1.HTTPIngressRuleValue{
+					Paths: []networkingv1.HTTPIngressPath{
+						{
+							Path:     "/ca.crl",
+							PathType: ptr.To(networkingv1.PathTypePrefix),
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: fmt.Sprintf("%s-server", instance.Name),
+									Port: networkingv1.ServiceBackendPort{
+										Number: 80,
+									},
+								},
+							},
+						},
+					},
+				}
+
+				ingress.Spec.Rules = []networkingv1.IngressRule{{}}
+				if instance.Spec.Expose.Ingress.Hostname != nil {
+					ingress.Spec.Rules[0].Host = *instance.Spec.Expose.Ingress.Hostname
+				}
+				ingress.Spec.Rules[0].HTTP = ingressRule
+
+				// If we have some IPAddress let's add an entry without host
+				// to support direct access
+				if len(instance.Spec.Expose.Ingress.IPAddresses) > 0 {
+					ingress.Spec.Rules = append(ingress.Spec.Rules, networkingv1.IngressRule{})
+					ingress.Spec.Rules[1].HTTP = ingressRule
+				}
+
+				return nil
+			})
+			if err != nil {
+				return handleError(
+					err,
+					"FailedToCreateOrUpdateServerIngress",
+					"failed to create or update Ingress for the server",
+				)
+			}
+			if op != controllerutil.OperationResultNone {
+				logger.Info("Ingress for the server reconciled", "operation", op)
+			}
+
+			instance.SetIngressExposed()
+			ingressReady = true
+		}
+
+		// Update the Issuer to add CRL Distribution points
+		if instance.NeedsIssuerConfiguration() {
+			var originalIssuer client.Object
+			desiredDP := instance.GetCRLDistributionPoint()
+
+			switch issuer := issuer.(type) {
+			case *cmv1.Issuer:
+				originalIssuer = issuer.DeepCopy()
+				issuer.Spec.CA.CRLDistributionPoints = desiredDP
+			case *cmv1.ClusterIssuer:
+				originalIssuer = issuer.DeepCopy()
+				issuer.Spec.CA.CRLDistributionPoints = desiredDP
+			default:
+				return handleError(
+					errors.New("unsupported issuer kind for updating CRL Distribution Points"),
+					"UnsupportedIssuerKind",
+					"unsupported issuer kind for updating CRL Distribution Points",
+				)
+			}
+
+			err = r.Patch(ctx, issuer, client.MergeFrom(originalIssuer))
+			if err != nil {
+				return handleError(
+					err,
+					"FailedToPatchIssuer",
+					"failed to patch issuer",
+				)
+			}
+
+			instance.SetIssuerConfigured()
+		}
 	}
 
 	// All good
@@ -444,14 +553,33 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
-// getIssuerSecret retrieves the Secret containing the CA certificate and private key
-func (r *ManagedCRLReconciler) getIssuerSecret(ctx context.Context, namespace string, issuerRef cmmetav1.IssuerReference) (*corev1.Secret, error) {
-	var secretRef client.ObjectKey
-
+// getIssuer retireves the Issuer or ClusterIssuer specified in the IssuerReference
+func (r *ManagedCRLReconciler) getIssuer(ctx context.Context, namespace string, issuerRef cmmetav1.IssuerReference) (client.Object, error) {
 	switch issuerRef.Kind {
 	case "Issuer":
 		issuer := &cmv1.Issuer{}
 		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: issuerRef.Name}, issuer); err != nil {
+			return nil, err
+		}
+		return issuer, nil
+	case "ClusterIssuer":
+		issuer := &cmv1.ClusterIssuer{}
+		if err := r.Get(ctx, client.ObjectKey{Name: issuerRef.Name}, issuer); err != nil {
+			return nil, err
+		}
+		return issuer, nil
+	default:
+		return nil, errors.New("unsupported issuer kind")
+	}
+}
+
+// getIssuerSecret retrieves the Secret containing the CA certificate and private key
+func (r *ManagedCRLReconciler) getIssuerSecret(ctx context.Context, namespace string, issuer client.Object) (*corev1.Secret, error) {
+	var secretRef client.ObjectKey
+
+	switch issuer := issuer.(type) {
+	case *cmv1.Issuer:
+		if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: issuer.Name}, issuer); err != nil {
 			return nil, err
 		}
 		if issuer.Spec.CA == nil {
@@ -461,9 +589,8 @@ func (r *ManagedCRLReconciler) getIssuerSecret(ctx context.Context, namespace st
 			Name:      issuer.Spec.CA.SecretName,
 			Namespace: namespace,
 		}
-	case "ClusterIssuer":
-		issuer := &cmv1.ClusterIssuer{}
-		if err := r.Get(ctx, client.ObjectKey{Name: issuerRef.Name}, issuer); err != nil {
+	case *cmv1.ClusterIssuer:
+		if err := r.Get(ctx, client.ObjectKey{Name: issuer.Name}, issuer); err != nil {
 			return nil, err
 		}
 		if issuer.Spec.CA == nil {
