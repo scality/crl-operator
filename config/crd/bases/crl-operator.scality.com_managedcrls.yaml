@@ -70,6 +70,7 @@ spec:
                         description: |-
                           Name is the container image name.
                           (default: "nginx")
+                        minLength: 1
                         type: string
                       pullSecrets:
                         description: |-
@@ -94,11 +95,13 @@ spec:
                         type: array
                       repository:
                         description: Repository is the container image repository.
+                        minLength: 1
                         type: string
                       tag:
                         description: |-
                           Tag is the container image tag.
                           (default: "1.29.3-alpine3.22")
+                        minLength: 1
                         type: string
                     type: object
                   nodeSelector:
@@ -187,6 +190,7 @@ spec:
                     serialNumber:
                       description: SerialNumber is the serial number of the certificate
                         to be revoked.
+                      minLength: 1
                       type: string
                   required:
                   - serialNumber

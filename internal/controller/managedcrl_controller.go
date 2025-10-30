@@ -121,6 +121,9 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Apply defaults
 	instance.WithDefaults()
+	if err := instance.Validate(); err != nil {
+		return ctrl.Result{}, fmt.Errorf("validation failed: %w", err)
+	}
 
 	needRenewal := false
 	original := instance.DeepCopy()

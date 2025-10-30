@@ -33,16 +33,19 @@ import (
 // ImageSpec defines information about the image to expose the CRL.
 type ImageSpec struct {
 	// Repository is the container image repository.
+	// +kubebuilder:validation:MinLength=1
 	// +optional
 	Repository *string `json:"repository"`
 
 	// Name is the container image name.
 	// (default: "nginx")
+	// +kubebuilder:validation:MinLength=1
 	// +optional
 	Name *string `json:"name"`
 
 	// Tag is the container image tag.
 	// (default: "1.29.3-alpine3.22")
+	// +kubebuilder:validation:MinLength=1
 	// +optional
 	Tag *string `json:"tag"`
 
@@ -71,6 +74,7 @@ type CRLExposeSpec struct {
 // RevocationSpec defines a certificate to be revoked.
 type RevocationSpec struct {
 	// SerialNumber is the serial number of the certificate to be revoked.
+	// +kubebuilder:validation:MinLength=1
 	SerialNumber string `json:"serialNumber"`
 
 	// RevocationTime is the time at which the certificate was revoked.
@@ -241,6 +245,71 @@ func (is *ImageSpec) withDefaults() {
 	if is.Tag == nil {
 		is.Tag = ptr.To("1.29.3-alpine3.22")
 	}
+}
+
+// Validate validates the ManagedCRL resource.
+func (mcrl *ManagedCRL) Validate() error {
+	err := mcrl.Spec.validate()
+	if err != nil {
+		return fmt.Errorf("spec validation failed: %w", err)
+	}
+	return nil
+}
+
+func (mcrls *ManagedCRLSpec) validate() error {
+	// IssuerRef kind supported is only ClusterIssuer or Issuer
+	if mcrls.IssuerRef.Kind != "Issuer" && mcrls.IssuerRef.Kind != "ClusterIssuer" {
+		return fmt.Errorf("issuerRef kind must be either 'Issuer' or 'ClusterIssuer', got '%s'", mcrls.IssuerRef.Kind)
+	}
+
+	// Ensure duration is at least a day
+	if mcrls.Duration.Hours() < 24 {
+		return fmt.Errorf("duration must be at least 24h")
+	}
+
+	for i, revocation := range mcrls.Revocations {
+		err := revocation.validate()
+		if err != nil {
+			return fmt.Errorf("invalid revocation at index %d: %w", i, err)
+		}
+	}
+
+	// Ensure we can get the revoked list entries
+	_, err := mcrls.GetRevokedListEntries()
+	if err != nil {
+		return fmt.Errorf("failed to get revoked list entries: %w", err)
+	}
+
+	if mcrls.Expose != nil {
+		err := mcrls.Expose.validate()
+		if err != nil {
+			return fmt.Errorf("invalid expose configuration: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (rs *RevocationSpec) validate() error {
+	// Nothing to validate for now, it's validated by the GetRevokedListEntries method
+	return nil
+}
+
+func (ces *CRLExposeSpec) validate() error {
+	if !ces.Enabled {
+		return nil
+	}
+
+	err := ces.Image.validate()
+	if err != nil {
+		return fmt.Errorf("invalid image configuration: %w", err)
+	}
+	return nil
+}
+
+func (is *ImageSpec) validate() error {
+	// Nothing to validate for now
+	return nil
 }
 
 // ToRevocationListEntry converts a RevocationSpec to an x509.RevocationListEntry.
