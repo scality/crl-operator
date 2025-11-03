@@ -8,6 +8,14 @@ on:
       - main
 
 jobs:
+  build:
+    uses: ./.github/workflows/build.yaml
+    secrets: inherit
+    with:
+      is-development: true
+      is-latest: false
+      is-stable: false
+
   generate:
     runs-on: ubuntu-24.04
     steps:
