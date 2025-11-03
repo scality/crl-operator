@@ -8,6 +8,22 @@ on:
       - main
 
 jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run code generation
+        # We run code generation to ensure that the generated code is up to date
+        run: |
+          go generate ./... &&
+          make generate manifests &&
+          git diff --quiet
+
   lint:
     runs-on: ubuntu-24.04
     steps:
