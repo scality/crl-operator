@@ -32,7 +32,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cmv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
-	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -51,18 +50,11 @@ type mcrlTestCase struct {
 var (
 	testCases = []mcrlTestCase{
 		{
-			name: "nominal-secret-only",
-			spec: crloperatorv1alpha1.ManagedCRLSpec{
-				IssuerRef: cmmetav1.IssuerReference{
-					Name: "test-issuer",
-				},
-			},
+			name: "secret-only",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{},
 		}, {
-			name: "nominal-exposed-only",
+			name: "exposed-only",
 			spec: crloperatorv1alpha1.ManagedCRLSpec{
-				IssuerRef: cmmetav1.IssuerReference{
-					Name: "test-issuer",
-				},
 				Expose: &crloperatorv1alpha1.CRLExposeSpec{
 					Enabled:  true,
 					Internal: ptr.To(false),
@@ -70,11 +62,8 @@ var (
 			},
 			shouldExposePod: true,
 		}, {
-			name: "nominal-exposed-with-custom-im",
+			name: "exposed-with-custom-im",
 			spec: crloperatorv1alpha1.ManagedCRLSpec{
-				IssuerRef: cmmetav1.IssuerReference{
-					Name: "test-issuer",
-				},
 				Expose: &crloperatorv1alpha1.CRLExposeSpec{
 					Enabled:  true,
 					Image:    &crloperatorv1alpha1.ImageSpec{Repository: ptr.To("custom/repo"), Tag: ptr.To("v1.2.3")},
@@ -82,6 +71,67 @@ var (
 				},
 			},
 			shouldExposePod: true,
+		}, {
+			name: "exposed-only-explicit-ingress-false",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(false),
+					Ingress: &crloperatorv1alpha1.IngressSpec{
+						Enabled: ptr.To(false),
+					},
+				},
+			},
+			shouldExposePod: true,
+		}, {
+			name: "ingress-only-hostname",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(false),
+					Ingress: &crloperatorv1alpha1.IngressSpec{
+						Hostname: ptr.To("test.local"),
+					},
+				},
+			},
+			shouldExposePod:       true,
+			shouldExposeIngress:   true,
+			shouldConfigureIssuer: true,
+		}, {
+			name: "ingress-only-ip",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(false),
+					Ingress: &crloperatorv1alpha1.IngressSpec{
+						IPAddresses: []crloperatorv1alpha1.IPAddress{
+							"10.11.12.13",
+							"20.21.22.23",
+						},
+					},
+				},
+			},
+			shouldExposePod:       true,
+			shouldExposeIngress:   true,
+			shouldConfigureIssuer: true,
+		}, {
+			name: "ingress-only-both",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(false),
+					Ingress: &crloperatorv1alpha1.IngressSpec{
+						Hostname: ptr.To("test.local"),
+						IPAddresses: []crloperatorv1alpha1.IPAddress{
+							"10.11.12.13",
+							"20.21.22.23",
+						},
+					},
+				},
+			},
+			shouldExposePod:       true,
+			shouldExposeIngress:   true,
+			shouldConfigureIssuer: true,
 		},
 	}
 )
@@ -91,6 +141,8 @@ func toTableEntry(tcs []mcrlTestCase) []TableEntry {
 	for _, tc := range tcs {
 		// Always add one entry for Issuer and one for ClusterIssuer
 		name := tc.name
+		tc.spec.IssuerRef.Name = "test-issuer"
+
 		tc.name = fmt.Sprintf("%s-issuer", name)
 		tc.spec.IssuerRef.Kind = "Issuer"
 		entries = append(entries, Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc))
@@ -258,7 +310,8 @@ func checkAllReady(mcrlRef types.NamespacedName, tc mcrlTestCase, podShouldResta
 		Expect(retrieved.Status.PodExposed).To(BeNil())
 	}
 	if tc.shouldExposeIngress {
-		Expect(false).To(BeTrue()) // TODO
+		By("checking the ManagedCRL becomes IngressExposed properly setup")
+		checkIngress(mcrlRef)
 	} else {
 		By("checking no IngressExposed status is set")
 		retrieved := &crloperatorv1alpha1.ManagedCRL{}
@@ -266,7 +319,7 @@ func checkAllReady(mcrlRef types.NamespacedName, tc mcrlTestCase, podShouldResta
 		Expect(retrieved.Status.IngressExposed).To(BeNil())
 	}
 	if tc.shouldConfigureIssuer {
-		Expect(false).To(BeTrue()) // TODO
+		Expect(true).To(BeTrue()) // TODO
 	} else {
 		By("checking no IssuerConfigured status is set")
 		retrieved := &crloperatorv1alpha1.ManagedCRL{}
@@ -424,4 +477,48 @@ func checkExposePod(mcrlRef types.NamespacedName, shouldRestart bool) {
 		"Name":       Equal(retrieved.Name),
 		"UID":        Equal(retrieved.UID),
 	})))
+}
+
+// checkIngress is a helper to check if the IngressExposed condition is set as expected
+func checkIngress(mcrlRef types.NamespacedName) {
+	retrieved := &crloperatorv1alpha1.ManagedCRL{}
+
+	// Wait until the ManagedCRL is IngressExposed
+	Eventually(func() bool {
+		Expect(k8sClient.Get(ctx, mcrlRef, retrieved)).To(Succeed())
+		for _, cond := range retrieved.Status.Conditions {
+			if cond.Type == "IngressExposed" {
+				return cond.Status == metav1.ConditionTrue && cond.ObservedGeneration == retrieved.Generation
+			}
+		}
+		return false
+	}, 10*time.Second, time.Second).Should(BeTrue())
+	retrieved.WithDefaults()
+
+	Expect(retrieved.Status.IngressExposed).To(PointTo(BeTrue()))
+
+	// Check Ingress existence
+	createdIngress := retrieved.GetIngress()
+	Expect(k8sClient.Get(
+		ctx,
+		client.ObjectKeyFromObject(createdIngress),
+		createdIngress,
+	)).To(Succeed())
+	Expect(createdIngress.OwnerReferences).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"APIVersion": Equal(crloperatorv1alpha1.GroupVersion.String()),
+		"Kind":       Equal("ManagedCRL"),
+		"Name":       Equal(retrieved.Name),
+		"UID":        Equal(retrieved.UID),
+	})))
+	Expect(createdIngress.Spec.IngressClassName).To(Equal(retrieved.Spec.Expose.Ingress.ClassName))
+	index := 0
+	if retrieved.Spec.Expose.Ingress.Hostname != nil {
+		Expect(len(createdIngress.Spec.Rules)).To(BeNumerically(">", index))
+		Expect(createdIngress.Spec.Rules[index].Host).To(Equal(*retrieved.Spec.Expose.Ingress.Hostname))
+		index += 1
+	}
+	if len(retrieved.Spec.Expose.Ingress.IPAddresses) > 0 {
+		Expect(len(createdIngress.Spec.Rules)).To(BeNumerically(">", index))
+		Expect(createdIngress.Spec.Rules[index].Host).To(BeEmpty())
+	}
 }
