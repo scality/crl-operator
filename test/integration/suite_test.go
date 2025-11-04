@@ -207,9 +207,9 @@ var _ = BeforeSuite(func() {
 			mcrl := rawObj.(*crloperatorv1alpha1.ManagedCRL)
 			var indexKeys []string
 			switch mcrl.Spec.IssuerRef.Kind {
-			case "Issuer":
+			case "Issuer": // nolint:goconst // "Issuer" string is clearer
 				indexKeys = append(indexKeys, fmt.Sprintf("Issuer/%s/%s", mcrl.Namespace, mcrl.Spec.IssuerRef.Name))
-			case "ClusterIssuer":
+			case "ClusterIssuer": // nolint:goconst // "ClusterIssuer" string is clearer
 				indexKeys = append(indexKeys, fmt.Sprintf("ClusterIssuer/%s", mcrl.Spec.IssuerRef.Name))
 			default:
 				return nil

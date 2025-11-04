@@ -132,6 +132,51 @@ var (
 			shouldExposePod:       true,
 			shouldExposeIngress:   true,
 			shouldConfigureIssuer: true,
+		}, {
+			name: "exposed-with-internal",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(true),
+				},
+			},
+			shouldExposePod:       true,
+			shouldConfigureIssuer: true,
+		}, {
+			name: "ingress-not-managed",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(false),
+					Ingress: &crloperatorv1alpha1.IngressSpec{
+						Managed:  ptr.To(false),
+						Hostname: ptr.To("test.local"),
+						IPAddresses: []crloperatorv1alpha1.IPAddress{
+							"10.11.12.13",
+							"20.21.22.23",
+						},
+					},
+				},
+			},
+			shouldExposePod:       true,
+			shouldConfigureIssuer: true,
+		}, {
+			name: "all-in-one",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled: true,
+					Ingress: &crloperatorv1alpha1.IngressSpec{
+						Hostname: ptr.To("test.local"),
+						IPAddresses: []crloperatorv1alpha1.IPAddress{
+							"10.11.12.13",
+							"20.21.22.23",
+						},
+					},
+				},
+			},
+			shouldExposePod:       true,
+			shouldExposeIngress:   true,
+			shouldConfigureIssuer: true,
 		},
 	}
 )
@@ -319,7 +364,8 @@ func checkAllReady(mcrlRef types.NamespacedName, tc mcrlTestCase, podShouldResta
 		Expect(retrieved.Status.IngressExposed).To(BeNil())
 	}
 	if tc.shouldConfigureIssuer {
-		Expect(true).To(BeTrue()) // TODO
+		By("checking the ManagedCRL becomes IssuerConfigured properly setup")
+		checkIssuerConfigured(mcrlRef)
 	} else {
 		By("checking no IssuerConfigured status is set")
 		retrieved := &crloperatorv1alpha1.ManagedCRL{}
@@ -520,5 +566,51 @@ func checkIngress(mcrlRef types.NamespacedName) {
 	if len(retrieved.Spec.Expose.Ingress.IPAddresses) > 0 {
 		Expect(len(createdIngress.Spec.Rules)).To(BeNumerically(">", index))
 		Expect(createdIngress.Spec.Rules[index].Host).To(BeEmpty())
+	}
+}
+
+// checkIssuerConfigured is a helper to check if the IssuerConfigured condition is set as expected
+func checkIssuerConfigured(mcrlRef types.NamespacedName) {
+	retrieved := &crloperatorv1alpha1.ManagedCRL{}
+
+	// Wait until the ManagedCRL is IssuerConfigured
+	Eventually(func() bool {
+		Expect(k8sClient.Get(ctx, mcrlRef, retrieved)).To(Succeed())
+		for _, cond := range retrieved.Status.Conditions {
+			if cond.Type == "IssuerConfigured" {
+				return cond.Status == metav1.ConditionTrue && cond.ObservedGeneration == retrieved.Generation
+			}
+		}
+		return false
+	}, 10*time.Second, time.Second).Should(BeTrue())
+	retrieved.WithDefaults()
+
+	Expect(retrieved.Status.IssuerConfigured).To(PointTo(BeTrue()))
+
+	// Retrieve the Issuer/ClusterIssuer and check it
+	switch retrieved.Spec.IssuerRef.Kind {
+	case "Issuer":
+		issuer := &cmv1.Issuer{}
+		Expect(k8sClient.Get(
+			ctx,
+			types.NamespacedName{
+				Name:      retrieved.Spec.IssuerRef.Name,
+				Namespace: mcrlRef.Namespace,
+			},
+			issuer,
+		)).To(Succeed())
+		Expect(issuer.Spec.CA.CRLDistributionPoints).To(Equal(retrieved.GetCRLDistributionPoint()))
+	case "ClusterIssuer":
+		clusterIssuer := &cmv1.ClusterIssuer{}
+		Expect(k8sClient.Get(
+			ctx,
+			types.NamespacedName{
+				Name: retrieved.Spec.IssuerRef.Name,
+			},
+			clusterIssuer,
+		)).To(Succeed())
+		Expect(clusterIssuer.Spec.CA.CRLDistributionPoints).To(Equal(retrieved.GetCRLDistributionPoint()))
+	default:
+		Fail("unexpected IssuerRef.Kind")
 	}
 }
