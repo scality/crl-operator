@@ -29,6 +29,7 @@ import (
 
 	cmv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -53,6 +54,9 @@ const (
 	renewBefore = 1 * time.Hour
 	// secretCRLKey is the key in the Secret data where the CRL is stored.
 	secretCRLKey = "ca.crl"
+
+	// finalizerName is the name of the finalizer used to clean up resources.
+	finalizerName = "crl-operator.scality.com/finalizer"
 
 	// Common labels
 	labelManagedByName  = "app.kubernetes.io/managed-by"
@@ -120,6 +124,32 @@ func (r *ManagedCRLReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	if instance.DeletionTimestamp.IsZero() {
+		// Add finalizer if not present
+		if !controllerutil.ContainsFinalizer(instance, finalizerName) {
+			logger.WithValues("finalizer", finalizerName).Info("adding finalizer")
+			controllerutil.AddFinalizer(instance, finalizerName)
+			if err := r.Update(ctx, instance); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		// The object is being deleted
+		if controllerutil.ContainsFinalizer(instance, finalizerName) {
+			finLogger := logger.WithValues("finalizer", finalizerName)
+			if err := r.handleFinalization(finLogger, ctx, instance); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Remove finalizer
+			finLogger.Info("removing finalizer")
+			controllerutil.RemoveFinalizer(instance, finalizerName)
+			if err := r.Update(ctx, instance); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
 	// Apply defaults
 	instance.WithDefaults()
 	if err := instance.Validate(); err != nil {
@@ -753,6 +783,53 @@ func (r *ManagedCRLReconciler) stdMutate(obj metav1.Object, instance *crloperato
 	if err != nil {
 		return fmt.Errorf("failed to set owner reference on Secret: %w", err)
 	}
+	return nil
+}
+
+// handleFinalization handles the deletion of a ManagedCRL resource by cleaning up
+// the CRL distribution points from the issuer and removing the finalizer.
+func (r *ManagedCRLReconciler) handleFinalization(logger logr.Logger, ctx context.Context, instance *crloperatorv1alpha1.ManagedCRL) error {
+	logger.Info("handling ManagedCRL deletion")
+
+	issuer, err := r.getIssuer(ctx, instance.Namespace, instance.Spec.IssuerRef)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Issuer no longer exists, nothing to clean up
+			logger.Info("issuer not found, skipping cleanup")
+		} else {
+			return fmt.Errorf("failed to get issuer: %w", err)
+		}
+	}
+
+	var originalIssuer client.Object
+	switch issuer := issuer.(type) {
+	case *cmv1.Issuer:
+		if issuer.Spec.CA == nil || len(issuer.Spec.CA.CRLDistributionPoints) == 0 {
+			// Nothing to do
+			break
+		}
+		originalIssuer = issuer.DeepCopy()
+		issuer.Spec.CA.CRLDistributionPoints = nil
+	case *cmv1.ClusterIssuer:
+		if issuer.Spec.CA == nil || len(issuer.Spec.CA.CRLDistributionPoints) == 0 {
+			// Nothing to do
+			break
+		}
+		originalIssuer = issuer.DeepCopy()
+		issuer.Spec.CA.CRLDistributionPoints = nil
+	default:
+		logger.Error(errors.New("unsupported issuer kind for cleaning up CRL distribution points"), "unsupported issuer kind")
+		// Nothing to do
+	}
+
+	if originalIssuer != nil {
+		if err := r.Patch(ctx, issuer, client.MergeFrom(originalIssuer)); err != nil {
+			return fmt.Errorf("failed to patch issuer: %w", err)
+		}
+		logger.Info("removed CRL distribution points from issuer during deletion")
+	}
+
+	logger.Info("ManagedCRL deletion handled successfully")
 	return nil
 }
 
