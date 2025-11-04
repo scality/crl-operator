@@ -717,6 +717,9 @@ func (r *ManagedCRLReconciler) crlNeedRenewal(currentCRL *x509.RevocationList, r
 	}
 
 	// Check if the CRL contains all revoked certificates
+	if len(revokedList) != len(currentCRL.RevokedCertificateEntries) {
+		return true
+	}
 	// NOTE: We manage the full list so we expect a match in the same order
 	for i, revoked := range revokedList {
 		if i >= len(currentCRL.RevokedCertificateEntries) {
