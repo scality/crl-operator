@@ -6,4 +6,10 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: managedcrl-sample
 spec:
-  # TODO(user): Add fields here
+  issuerRef:
+    name: my-ca-issuer
+    kind: ClusterIssuer
+  expose:
+    enabled: true
+    ingress:
+      host: crl.example.com

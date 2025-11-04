@@ -1,16 +1,30 @@
+[![Post Merge](https://github.com/scality/crl-operator/actions/workflows/post-merge.yaml/badge.svg)](https://github.com/scality/crl-operator/actions/workflows/post-merge.yaml)
+
 # crl-operator
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator for managing Certificate Revocation Lists (CRLs) in your cluster
+based on ClusterIssuer/Issuer resources from cert-manager.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+The CRL Operator provides automated management of Certificate Revocation Lists within
+Kubernetes environments. It enables cluster administrators to deploy, update, and maintain
+CRLs as custom resources.
+
+The CRL can also be exposed in a Pod via an NGINX server, allowing clients to retrieve
+the CRL using HTTP requests internally using a Kubernetes Service or externally via
+an Ingress resource (that can be managed by the operator as well).
+
+The operator handles CRL lifecycle management, periodic updates, and patch of ClusterIssuer/Issuer
+resources from cert-manager to include CRL distribution points.
 
 ## Getting Started
 
 ### Prerequisites
 - go version v1.25.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- docker
+- kubectl
+- Access to a Kubernetes v1.32+ cluster
 
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
@@ -21,7 +35,7 @@ make docker-build docker-push IMG=<some-registry>/crl-operator:tag
 
 **NOTE:** This image ought to be published in the personal registry you specified.
 And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+Make sure you have the proper permission to the registry if the above commands don't work.
 
 **Install the CRDs into the cluster:**
 
@@ -45,9 +59,10 @@ You can apply the samples (examples) from the config/sample:
 kubectl apply -k config/samples/
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+>**NOTE**: Ensure to update the sample CRs to fit your needs before applying them to the cluster.
 
 ### To Uninstall
+
 **Delete the instances (CRs) from the cluster:**
 
 ```sh
@@ -66,56 +81,9 @@ make uninstall
 make undeploy
 ```
 
-## Project Distribution
-
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/crl-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/crl-operator/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-operator-sdk edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+See [contributing](CONTRIBUTING.md) for details.
 
 ## License
 
