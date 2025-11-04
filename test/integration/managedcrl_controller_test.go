@@ -51,37 +51,53 @@ type mcrlTestCase struct {
 var (
 	testCases = []mcrlTestCase{
 		{
-			name: "nominal-secret-only-issuer",
+			name: "nominal-secret-only",
 			spec: crloperatorv1alpha1.ManagedCRLSpec{
 				IssuerRef: cmmetav1.IssuerReference{
 					Name: "test-issuer",
-					Kind: "Issuer",
 				},
 			},
-			shouldError:           false,
-			shouldExposePod:       false,
-			shouldExposeIngress:   false,
-			shouldConfigureIssuer: false,
 		}, {
-			name: "nominal-secret-only-clusterissuer",
+			name: "nominal-exposed-only",
 			spec: crloperatorv1alpha1.ManagedCRLSpec{
 				IssuerRef: cmmetav1.IssuerReference{
 					Name: "test-issuer",
-					Kind: "ClusterIssuer",
+				},
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Internal: ptr.To(false),
 				},
 			},
-			shouldError:           false,
-			shouldExposePod:       false,
-			shouldExposeIngress:   false,
-			shouldConfigureIssuer: false,
+			shouldExposePod: true,
+		}, {
+			name: "nominal-exposed-with-custom-im",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				IssuerRef: cmmetav1.IssuerReference{
+					Name: "test-issuer",
+				},
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled:  true,
+					Image:    &crloperatorv1alpha1.ImageSpec{Repository: ptr.To("custom/repo"), Tag: ptr.To("v1.2.3")},
+					Internal: ptr.To(false),
+				},
+			},
+			shouldExposePod: true,
 		},
 	}
 )
 
 func toTableEntry(tcs []mcrlTestCase) []TableEntry {
-	entries := make([]TableEntry, len(tcs))
-	for i, tc := range tcs {
-		entries[i] = Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc)
+	entries := []TableEntry{}
+	for _, tc := range tcs {
+		// Always add one entry for Issuer and one for ClusterIssuer
+		name := tc.name
+		tc.name = fmt.Sprintf("%s-issuer", name)
+		tc.spec.IssuerRef.Kind = "Issuer"
+		entries = append(entries, Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc))
+
+		tc.name = fmt.Sprintf("%s-clusterissuer", name)
+		tc.spec.IssuerRef.Kind = "ClusterIssuer"
+		entries = append(entries, Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc))
 	}
 	return entries
 }
@@ -165,7 +181,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 		})
 
 		DescribeTableSubtree("should reconcile various ManagedCRL resources as expected", func(tc mcrlTestCase) {
-			It("should successfully reconcile a norminal secret only resource", func() {
+			It("should successfully reconcile resource", func() {
 				typeNamespacedName := types.NamespacedName{
 					Name:      tc.name,
 					Namespace: testNamespace,
@@ -185,7 +201,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 					return
 				}
 				Expect(err).ToNot(HaveOccurred())
-				checkAllReady(typeNamespacedName, tc)
+				checkAllReady(typeNamespacedName, tc, true)
 
 				By("adding a revoked certificate to the CRL and checking the update is reflected")
 				retrieved := &crloperatorv1alpha1.ManagedCRL{}
@@ -197,7 +213,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 					},
 				}
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
-				checkAllReady(typeNamespacedName, tc)
+				checkAllReady(typeNamespacedName, tc, false)
 
 				By("changing the reason code of a revoked certificate")
 				Expect(k8sClient.Get(ctx, typeNamespacedName, retrieved)).To(Succeed())
@@ -208,13 +224,13 @@ var _ = Describe("ManagedCRL Controller", func() {
 					},
 				}
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
-				checkAllReady(typeNamespacedName, tc)
+				checkAllReady(typeNamespacedName, tc, false)
 
 				By("removing all revoked certificates from the CRL")
 				Expect(k8sClient.Get(ctx, typeNamespacedName, retrieved)).To(Succeed())
 				retrieved.Spec.Revocations = nil
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
-				checkAllReady(typeNamespacedName, tc)
+				checkAllReady(typeNamespacedName, tc, false)
 
 				By("deleting the ManagedCRL")
 				Expect(k8sClient.Delete(ctx, retrieved)).To(Succeed())
@@ -228,12 +244,13 @@ var _ = Describe("ManagedCRL Controller", func() {
 	})
 })
 
-func checkAllReady(mcrlRef types.NamespacedName, tc mcrlTestCase) {
+func checkAllReady(mcrlRef types.NamespacedName, tc mcrlTestCase, podShouldRestart bool) {
 	By("checking the ManagedCRL becomes Secret properly setup")
 	checkSecret(mcrlRef)
 
 	if tc.shouldExposePod {
-		Expect(false).To(BeTrue()) // TODO
+		By("checking the ManagedCRL becomes PodExposed properly setup")
+		checkExposePod(mcrlRef, podShouldRestart)
 	} else {
 		By("checking no PodExposed status is set")
 		retrieved := &crloperatorv1alpha1.ManagedCRL{}
@@ -316,4 +333,95 @@ func checkSecret(mcrlRef types.NamespacedName) {
 			Expect(crl.RevokedCertificateEntries[i].ReasonCode).To(Equal(revokedCert.ReasonCode))
 		}
 	}
+}
+
+// checkExposePod is a helper to check if the PodExposed condition is set as expected
+func checkExposePod(mcrlRef types.NamespacedName, shouldRestart bool) {
+	retrieved := &crloperatorv1alpha1.ManagedCRL{}
+
+	if shouldRestart {
+		By("checking the deployment is restarted when already present")
+		// Wait until the ManagedCRL is PodExposed False since the deployment is not ready yet
+		Eventually(func() bool {
+			Expect(k8sClient.Get(ctx, mcrlRef, retrieved)).To(Succeed())
+			for _, cond := range retrieved.Status.Conditions {
+				if cond.Type == "PodExposed" {
+					return cond.Status == metav1.ConditionFalse &&
+						cond.ObservedGeneration == retrieved.Generation &&
+						cond.Reason == "ServerPodNotReady"
+				}
+			}
+			return false
+		}, 10*time.Second, time.Second).Should(BeTrue())
+		retrieved.WithDefaults()
+		Expect(retrieved.Status.PodExposed).To(PointTo(BeFalse()))
+
+		// Check the deployment
+		createdDeployment := retrieved.GetDeployment()
+		Expect(k8sClient.Get(
+			ctx,
+			client.ObjectKeyFromObject(createdDeployment),
+			createdDeployment,
+		)).To(Succeed())
+		Expect(createdDeployment.Spec.Replicas).To(PointTo(BeEquivalentTo(2)))
+		Expect(createdDeployment.OwnerReferences).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+			"APIVersion": Equal(crloperatorv1alpha1.GroupVersion.String()),
+			"Kind":       Equal("ManagedCRL"),
+			"Name":       Equal(retrieved.Name),
+			"UID":        Equal(retrieved.UID),
+		})))
+		Expect(createdDeployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+		Expect(createdDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(retrieved.Spec.Expose.Image.GetImage()))
+
+		// Set the deployment as ready
+		createdDeployment.Status.Replicas = 2
+		createdDeployment.Status.ReadyReplicas = 2
+		Expect(k8sClient.Status().Update(
+			ctx,
+			createdDeployment,
+		)).To(Succeed())
+	}
+
+	// Wait until the ManagedCRL is PodExposed
+	Eventually(func() bool {
+		Expect(k8sClient.Get(ctx, mcrlRef, retrieved)).To(Succeed())
+		for _, cond := range retrieved.Status.Conditions {
+			if cond.Type == "PodExposed" {
+				return cond.Status == metav1.ConditionTrue && cond.ObservedGeneration == retrieved.Generation
+			}
+		}
+		return false
+	}, 10*time.Second, time.Second).Should(BeTrue())
+	retrieved.WithDefaults()
+
+	Expect(retrieved.Status.PodExposed).To(PointTo(BeTrue()))
+
+	// Check ConfigMap existence
+	createdConfigMap := retrieved.GetConfigMap()
+	Expect(k8sClient.Get(
+		ctx,
+		client.ObjectKeyFromObject(createdConfigMap),
+		createdConfigMap,
+	)).To(Succeed())
+	Expect(createdConfigMap.Data).To(HaveKey("default.conf"))
+	Expect(createdConfigMap.OwnerReferences).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"APIVersion": Equal(crloperatorv1alpha1.GroupVersion.String()),
+		"Kind":       Equal("ManagedCRL"),
+		"Name":       Equal(retrieved.Name),
+		"UID":        Equal(retrieved.UID),
+	})))
+
+	// Check Service existence
+	createdService := retrieved.GetService()
+	Expect(k8sClient.Get(
+		ctx,
+		client.ObjectKeyFromObject(createdService),
+		createdService,
+	)).To(Succeed())
+	Expect(createdService.OwnerReferences).To(ContainElement(MatchFields(IgnoreExtras, Fields{
+		"APIVersion": Equal(crloperatorv1alpha1.GroupVersion.String()),
+		"Kind":       Equal("ManagedCRL"),
+		"Name":       Equal(retrieved.Name),
+		"UID":        Equal(retrieved.UID),
+	})))
 }
