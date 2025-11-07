@@ -85,6 +85,10 @@ make undeploy
 
 See [contributing](CONTRIBUTING.md) for details.
 
+## Design
+
+See [design](DESIGN.md) for details.
+
 ## License
 
 Copyright 2025 Scality.
