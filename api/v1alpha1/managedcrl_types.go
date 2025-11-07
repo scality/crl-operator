@@ -333,6 +333,7 @@ func (is *IngressSpec) withDefaults() {
 
 // Validate validates the ManagedCRL resource.
 func (mcrl *ManagedCRL) Validate() error {
+	mcrl.WithDefaults()
 	err := mcrl.Spec.validate()
 	if err != nil {
 		return fmt.Errorf("spec validation failed: %w", err)
@@ -438,6 +439,8 @@ func (rs RevocationSpec) ToRevocationListEntry() (x509.RevocationListEntry, erro
 
 // GetRevokedListEntries converts the Revocations in ManagedCRLSpec to a slice of x509.RevocationListEntry.
 func (mcrls *ManagedCRLSpec) GetRevokedListEntries() ([]x509.RevocationListEntry, error) {
+	mcrls.withDefaults()
+
 	if mcrls.Revocations == nil {
 		return []x509.RevocationListEntry{}, nil
 	}
@@ -455,6 +458,8 @@ func (mcrls *ManagedCRLSpec) GetRevokedListEntries() ([]x509.RevocationListEntry
 
 // GetImage returns the full image string in the format "repository/name:tag".
 func (is *ImageSpec) GetImage() string {
+	is.withDefaults()
+
 	image := fmt.Sprintf("%s:%s", *is.Name, *is.Tag)
 	if is.Repository != nil {
 		image = fmt.Sprintf("%s/%s", *is.Repository, image)
@@ -464,6 +469,8 @@ func (is *ImageSpec) GetImage() string {
 
 // GetCRLDistributionPoint returns the CRL distribution point URL based on the Ingress configuration.
 func (mcrl *ManagedCRL) GetCRLDistributionPoint() []string {
+	mcrl.WithDefaults()
+
 	var urls []string
 
 	// Add Ingress URLs if enabled

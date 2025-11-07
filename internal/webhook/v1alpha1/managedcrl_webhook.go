@@ -103,7 +103,6 @@ func (v *ManagedCRLCustomValidator) ValidateDelete(ctx context.Context, obj runt
 
 // validationManagedCRL validates the ManagedCRL fields.
 func validationManagedCRL(logger logr.Logger, ctx context.Context, c client.Client, managedcrl *crloperatorv1alpha1.ManagedCRL) error {
-	managedcrl.WithDefaults()
 	if err := managedcrl.Validate(); err != nil {
 		logger.Error(err, "Validation failed")
 		return err

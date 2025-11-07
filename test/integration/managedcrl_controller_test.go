@@ -510,7 +510,6 @@ func checkSecret(mcrlRef types.NamespacedName) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.ObjectMeta.Finalizers).To(ContainElement("crl-operator.scality.com/finalizer"))
 
@@ -576,7 +575,6 @@ func checkExposePod(mcrlRef types.NamespacedName, shouldRestart bool) {
 			}
 			return false
 		}, 10*time.Second, time.Second).Should(BeTrue())
-		retrieved.WithDefaults()
 		Expect(retrieved.Status.PodExposed).To(PointTo(BeFalse()))
 
 		// Check the deployment
@@ -615,7 +613,6 @@ func checkExposePod(mcrlRef types.NamespacedName, shouldRestart bool) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.Status.PodExposed).To(PointTo(BeTrue()))
 
@@ -663,7 +660,6 @@ func checkIngress(mcrlRef types.NamespacedName) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.Status.IngressExposed).To(PointTo(BeTrue()))
 
@@ -707,7 +703,6 @@ func checkIssuerConfigured(mcrlRef types.NamespacedName) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.Status.IssuerConfigured).To(PointTo(BeTrue()))
 
