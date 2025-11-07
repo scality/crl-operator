@@ -1,25 +1,26 @@
 name: E2E Tests
 
 on:
-  push:
-  pull_request:
+  workflow_call:
 
 jobs:
   test-e2e:
-    name: Run on Ubuntu
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Disable e2e tests since there is none for now
+    if: false
     steps:
-      - name: Clone the code
+      - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: Install the latest version of kind
+      - name: Install kind
+        env:
+          KIND_VERSION: v0.30.0
         run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 

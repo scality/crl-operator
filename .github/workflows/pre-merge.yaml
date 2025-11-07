@@ -1,0 +1,55 @@
+name: "Pre Merge"
+
+on:
+  workflow_dispatch:
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yaml
+    secrets: inherit
+    with:
+      is-development: true
+      is-latest: false
+      is-stable: false
+
+  generate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run code generation
+        # We run code generation to ensure that the generated code is up to date
+        run: |
+          go generate ./... &&
+          make generate manifests &&
+          git diff --quiet
+
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Run linters
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
+  test-e2e:
+    uses: ./.github/workflows/test-e2e.yml
+    secrets: inherit
