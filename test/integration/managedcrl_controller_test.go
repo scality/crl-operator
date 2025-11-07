@@ -336,6 +336,33 @@ var _ = Describe("ManagedCRL Controller", func() {
 						k8sClient.Get(ctx, typeNamespacedName, &crloperatorv1alpha1.ManagedCRL{}),
 					)
 				}, 10*time.Second, time.Second).Should(BeTrue())
+
+				By("checking the CRL Distribution Points have been removed from the Issuer/ClusterIssuer")
+				switch tc.spec.IssuerRef.Kind {
+				case "Issuer":
+					issuer := &cmv1.Issuer{}
+					Expect(k8sClient.Get(
+						ctx,
+						types.NamespacedName{
+							Name:      tc.spec.IssuerRef.Name,
+							Namespace: typeNamespacedName.Namespace,
+						},
+						issuer,
+					)).To(Succeed())
+					Expect(issuer.Spec.CA.CRLDistributionPoints).To(BeEmpty())
+				case "ClusterIssuer":
+					clusterIssuer := &cmv1.ClusterIssuer{}
+					Expect(k8sClient.Get(
+						ctx,
+						types.NamespacedName{
+							Name: tc.spec.IssuerRef.Name,
+						},
+						clusterIssuer,
+					)).To(Succeed())
+					Expect(clusterIssuer.Spec.CA.CRLDistributionPoints).To(BeEmpty())
+				default:
+					Fail("unexpected IssuerRef.Kind")
+				}
 			})
 		}, toTableEntry(testCases))
 	})
@@ -389,6 +416,8 @@ func checkSecret(mcrlRef types.NamespacedName) {
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
 	retrieved.WithDefaults()
+
+	Expect(retrieved.ObjectMeta.Finalizers).To(ContainElement("crl-operator.scality.com/finalizer"))
 
 	expectedSecretNs := mcrlRef.Namespace
 	if retrieved.Spec.IssuerRef.Kind == "ClusterIssuer" {
