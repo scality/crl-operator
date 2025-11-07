@@ -17,8 +17,10 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -26,11 +28,13 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	cmv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -49,6 +53,7 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(cmv1.AddToScheme(scheme))
 
 	utilruntime.Must(crloperatorv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
@@ -64,6 +69,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+	var certManagerNamespace string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -81,6 +87,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&certManagerNamespace, "cert-manager-namespace", "cert-manager",
+		"The namespace where cert-manager is installed.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -203,13 +211,49 @@ func main() {
 	}
 
 	if err := (&controller.ManagedCRLReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		CertManagerNamespace: certManagerNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ManagedCRL")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
+
+	// Create a field index for ClusterIssuer, Issuer and Secret references
+	// so that our CRL controller react to changes in those resources.
+	err = mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&crloperatorv1alpha1.ManagedCRL{},
+		"IssuerRef",
+		func(rawObj client.Object) []string {
+			mcrl := rawObj.(*crloperatorv1alpha1.ManagedCRL)
+			var indexKeys []string
+			switch mcrl.Spec.IssuerRef.Kind {
+			case "Issuer":
+				indexKeys = append(indexKeys, fmt.Sprintf("Issuer/%s/%s", mcrl.Namespace, mcrl.Spec.IssuerRef.Name))
+			case "ClusterIssuer":
+				indexKeys = append(indexKeys, fmt.Sprintf("ClusterIssuer/%s", mcrl.Spec.IssuerRef.Name))
+			default:
+				return nil
+			}
+
+			// Add a reference to the Secret containing the CA certificate and private key
+			// used to sign the CRL.
+			if mcrl.Status.ObservedCASecretRef != nil {
+				indexKeys = append(
+					indexKeys,
+					fmt.Sprintf("Secret/%s/%s", mcrl.Status.ObservedCASecretRef.Namespace, mcrl.Status.ObservedCASecretRef.Name),
+				)
+			}
+
+			return indexKeys
+		},
+	)
+	if err != nil {
+		setupLog.Error(err, "unable to create field index for IssuerRef")
+		os.Exit(1)
+	}
 
 	if metricsCertWatcher != nil {
 		setupLog.Info("Adding metrics certificate watcher to manager")
