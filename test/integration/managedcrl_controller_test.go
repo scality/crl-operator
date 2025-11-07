@@ -69,7 +69,7 @@ var (
 			spec: crloperatorv1alpha1.ManagedCRLSpec{
 				Expose: &crloperatorv1alpha1.CRLExposeSpec{
 					Enabled:  true,
-					Image:    &crloperatorv1alpha1.ImageSpec{Repository: ptr.To("custom/repo"), Tag: ptr.To("v1.2.3")},
+					Image:    crloperatorv1alpha1.ImageSpec{Repository: ptr.To("custom/repo"), Tag: ptr.To("v1.2.3")},
 					Internal: ptr.To(false),
 				},
 			},
@@ -401,7 +401,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 				retrieved.Spec.Revocations = []crloperatorv1alpha1.RevocationSpec{
 					{
 						SerialNumber: "123456789",
-						ReasonCode:   ptr.To(2),
+						ReasonCode:   2,
 					},
 				}
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
@@ -412,7 +412,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 				retrieved.Spec.Revocations = []crloperatorv1alpha1.RevocationSpec{
 					{
 						SerialNumber: "123456789",
-						ReasonCode:   ptr.To(1),
+						ReasonCode:   1,
 					},
 				}
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
