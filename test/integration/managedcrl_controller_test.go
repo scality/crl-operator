@@ -69,7 +69,7 @@ var (
 			spec: crloperatorv1alpha1.ManagedCRLSpec{
 				Expose: &crloperatorv1alpha1.CRLExposeSpec{
 					Enabled:  true,
-					Image:    &crloperatorv1alpha1.ImageSpec{Repository: ptr.To("custom/repo"), Tag: ptr.To("v1.2.3")},
+					Image:    crloperatorv1alpha1.ImageSpec{Repository: ptr.To("custom/repo"), Tag: ptr.To("v1.2.3")},
 					Internal: ptr.To(false),
 				},
 			},
@@ -401,7 +401,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 				retrieved.Spec.Revocations = []crloperatorv1alpha1.RevocationSpec{
 					{
 						SerialNumber: "123456789",
-						ReasonCode:   ptr.To(2),
+						ReasonCode:   2,
 					},
 				}
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
@@ -412,7 +412,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 				retrieved.Spec.Revocations = []crloperatorv1alpha1.RevocationSpec{
 					{
 						SerialNumber: "123456789",
-						ReasonCode:   ptr.To(1),
+						ReasonCode:   1,
 					},
 				}
 				Expect(k8sClient.Update(ctx, retrieved)).To(Succeed())
@@ -510,7 +510,6 @@ func checkSecret(mcrlRef types.NamespacedName) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.ObjectMeta.Finalizers).To(ContainElement("crl-operator.scality.com/finalizer"))
 
@@ -576,7 +575,6 @@ func checkExposePod(mcrlRef types.NamespacedName, shouldRestart bool) {
 			}
 			return false
 		}, 10*time.Second, time.Second).Should(BeTrue())
-		retrieved.WithDefaults()
 		Expect(retrieved.Status.PodExposed).To(PointTo(BeFalse()))
 
 		// Check the deployment
@@ -615,7 +613,6 @@ func checkExposePod(mcrlRef types.NamespacedName, shouldRestart bool) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.Status.PodExposed).To(PointTo(BeTrue()))
 
@@ -663,7 +660,6 @@ func checkIngress(mcrlRef types.NamespacedName) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.Status.IngressExposed).To(PointTo(BeTrue()))
 
@@ -707,7 +703,6 @@ func checkIssuerConfigured(mcrlRef types.NamespacedName) {
 		}
 		return false
 	}, 10*time.Second, time.Second).Should(BeTrue())
-	retrieved.WithDefaults()
 
 	Expect(retrieved.Status.IssuerConfigured).To(PointTo(BeTrue()))
 

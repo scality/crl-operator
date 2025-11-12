@@ -95,7 +95,7 @@ type CRLExposeSpec struct {
 
 	// Image specifies the container image to use for exposing the CRL.
 	// +optional
-	Image *ImageSpec `json:"image"`
+	Image ImageSpec `json:"image,omitempty"`
 	// Node Selector to deploy the CRL server
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
@@ -128,8 +128,7 @@ type RevocationSpec struct {
 	RevocationTime *metav1.Time `json:"revocationTime,omitempty"`
 
 	// Reason is the reason for revocation (refer to RFC 5280 Section 5.3.1.).
-	// +optional
-	ReasonCode *int `json:"reasonCode,omitempty"`
+	ReasonCode int `json:"reasonCode,omitempty"`
 }
 
 // ManagedCRLSpec defines the desired state of ManagedCRL.
@@ -300,15 +299,9 @@ func (rs *RevocationSpec) withDefaults() {
 	if rs.RevocationTime == nil {
 		rs.RevocationTime = &metav1.Time{Time: metav1.Now().Time}
 	}
-	if rs.ReasonCode == nil {
-		rs.ReasonCode = ptr.To(0) // Unspecified
-	}
 }
 
 func (ces *CRLExposeSpec) withDefaults() {
-	if ces.Image == nil {
-		ces.Image = &ImageSpec{}
-	}
 	ces.Image.withDefaults()
 
 	if ces.Ingress != nil {
@@ -340,6 +333,7 @@ func (is *IngressSpec) withDefaults() {
 
 // Validate validates the ManagedCRL resource.
 func (mcrl *ManagedCRL) Validate() error {
+	mcrl.WithDefaults()
 	err := mcrl.Spec.validate()
 	if err != nil {
 		return fmt.Errorf("spec validation failed: %w", err)
@@ -439,12 +433,14 @@ func (rs RevocationSpec) ToRevocationListEntry() (x509.RevocationListEntry, erro
 	return x509.RevocationListEntry{
 		SerialNumber:   serial,
 		RevocationTime: rs.RevocationTime.Time,
-		ReasonCode:     *rs.ReasonCode,
+		ReasonCode:     rs.ReasonCode,
 	}, nil
 }
 
 // GetRevokedListEntries converts the Revocations in ManagedCRLSpec to a slice of x509.RevocationListEntry.
 func (mcrls *ManagedCRLSpec) GetRevokedListEntries() ([]x509.RevocationListEntry, error) {
+	mcrls.withDefaults()
+
 	if mcrls.Revocations == nil {
 		return []x509.RevocationListEntry{}, nil
 	}
@@ -462,6 +458,8 @@ func (mcrls *ManagedCRLSpec) GetRevokedListEntries() ([]x509.RevocationListEntry
 
 // GetImage returns the full image string in the format "repository/name:tag".
 func (is *ImageSpec) GetImage() string {
+	is.withDefaults()
+
 	image := fmt.Sprintf("%s:%s", *is.Name, *is.Tag)
 	if is.Repository != nil {
 		image = fmt.Sprintf("%s/%s", *is.Repository, image)
@@ -471,6 +469,8 @@ func (is *ImageSpec) GetImage() string {
 
 // GetCRLDistributionPoint returns the CRL distribution point URL based on the Ingress configuration.
 func (mcrl *ManagedCRL) GetCRLDistributionPoint() []string {
+	mcrl.WithDefaults()
+
 	var urls []string
 
 	// Add Ingress URLs if enabled
