@@ -1,4 +1,6 @@
+[![GitHub release](https://img.shields.io/github/release/scality/crl-operator.svg)](https://github.com/scality/crl-operator/releases/latest)
 [![Post Merge](https://github.com/scality/crl-operator/actions/workflows/post-merge.yaml/badge.svg)](https://github.com/scality/crl-operator/actions/workflows/post-merge.yaml)
+
 
 # crl-operator
 
