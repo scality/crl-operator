@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -38,9 +39,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	crloperatorv1alpha1 "github.com/scality/crl-operator/api/v1alpha1"
 	"github.com/scality/crl-operator/internal/controller"
+	webhookv1alpha1 "github.com/scality/crl-operator/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -137,6 +140,9 @@ var _ = BeforeSuite(func() {
 			filepath.Join("..", "..", "testdata", "crds"),
 		},
 		ErrorIfCRDPathMissing: true,
+		WebhookInstallOptions: envtest.WebhookInstallOptions{
+			Paths: []string{filepath.Join("..", "..", "config", "webhook")},
+		},
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
@@ -155,8 +161,14 @@ var _ = BeforeSuite(func() {
 
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme.Scheme,
+		WebhookServer: webhook.NewServer(webhook.Options{
+			Host:    testEnv.WebhookInstallOptions.LocalServingHost,
+			Port:    testEnv.WebhookInstallOptions.LocalServingPort,
+			CertDir: testEnv.WebhookInstallOptions.LocalServingCertDir,
+		}),
 	})
 	Expect(err).ToNot(HaveOccurred())
+	Expect(webhookv1alpha1.SetupManagedCRLWebhookWithManager(k8sManager)).To(Succeed())
 
 	// Create default cert-manager namespace
 	Expect(k8sClient.Create(
@@ -234,6 +246,16 @@ var _ = BeforeSuite(func() {
 		err = k8sManager.Start(ctx)
 		Expect(err).ToNot(HaveOccurred())
 	}()
+
+	By("waiting for webhook server to be ready")
+	Eventually(func() error {
+		webhookServer := k8sManager.GetWebhookServer()
+		err := webhookServer.StartedChecker()(nil)
+		if err != nil {
+			return fmt.Errorf("webhook server not started: %w", err)
+		}
+		return nil
+	}, 10*time.Second, time.Second).Should(Succeed())
 })
 
 var _ = AfterSuite(func() {

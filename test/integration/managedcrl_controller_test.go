@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -32,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	cmv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -42,6 +44,7 @@ type mcrlTestCase struct {
 	name                  string
 	spec                  crloperatorv1alpha1.ManagedCRLSpec
 	shouldError           bool
+	errorMessage          string
 	shouldExposePod       bool
 	shouldExposeIngress   bool
 	shouldConfigureIssuer bool
@@ -177,6 +180,61 @@ var (
 			shouldExposePod:       true,
 			shouldExposeIngress:   true,
 			shouldConfigureIssuer: true,
+		}, {
+			name: "error-invalid-issuer-kind",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				IssuerRef: cmmetav1.IssuerReference{
+					Kind: "InvalidKind",
+				},
+			},
+			shouldError:  true,
+			errorMessage: "issuerRef kind must be either 'Issuer' or 'ClusterIssuer', got 'InvalidKind'",
+		}, {
+			name: "error-non-existent-issuer",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				IssuerRef: cmmetav1.IssuerReference{
+					Name: "non-existent-issuer",
+				},
+			},
+			shouldError:  true,
+			errorMessage: "issuer non-existent-issuer not found",
+		}, {
+			name: "error-non-ca-issuer",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				IssuerRef: cmmetav1.IssuerReference{
+					Name: "test-issuer-non-ca",
+				},
+			},
+			shouldError:  true,
+			errorMessage: "issuer test-issuer-non-ca .*is not a CA issuer",
+		}, {
+			name: "error-too-small-duration",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Duration: &metav1.Duration{Duration: time.Hour},
+			},
+			shouldError:  true,
+			errorMessage: "duration must be at least 24h",
+		}, {
+			name: "error-invalid-serial-number",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Revocations: []crloperatorv1alpha1.RevocationSpec{
+					{
+						SerialNumber: "invalid-serial",
+					},
+				},
+			},
+			shouldError:  true,
+			errorMessage: "invalid serial number: invalid-serial",
+		}, {
+			name: "error-empty-ingress",
+			spec: crloperatorv1alpha1.ManagedCRLSpec{
+				Expose: &crloperatorv1alpha1.CRLExposeSpec{
+					Enabled: true,
+					Ingress: &crloperatorv1alpha1.IngressSpec{},
+				},
+			},
+			shouldError:  true,
+			errorMessage: "invalid ingress configuration: either hostname or ipAddresses must be specified",
 		},
 	}
 )
@@ -186,15 +244,19 @@ func toTableEntry(tcs []mcrlTestCase) []TableEntry {
 	for _, tc := range tcs {
 		// Always add one entry for Issuer and one for ClusterIssuer
 		name := tc.name
-		tc.spec.IssuerRef.Name = "test-issuer"
+		if tc.spec.IssuerRef.Name == "" {
+			tc.spec.IssuerRef.Name = "test-issuer"
+		}
+		issuerKindToTest := []string{"Issuer", "ClusterIssuer"}
+		if tc.spec.IssuerRef.Kind != "" {
+			issuerKindToTest = []string{tc.spec.IssuerRef.Kind}
+		}
 
-		tc.name = fmt.Sprintf("%s-issuer", name)
-		tc.spec.IssuerRef.Kind = "Issuer"
-		entries = append(entries, Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc))
-
-		tc.name = fmt.Sprintf("%s-clusterissuer", name)
-		tc.spec.IssuerRef.Kind = "ClusterIssuer"
-		entries = append(entries, Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc))
+		for _, kind := range issuerKindToTest {
+			tc.name = fmt.Sprintf("%s-%s", name, strings.ToLower(kind))
+			tc.spec.IssuerRef.Kind = kind
+			entries = append(entries, Entry(fmt.Sprintf("ManagedCRL %s", tc.name), tc))
+		}
 	}
 	return entries
 }
@@ -233,6 +295,19 @@ var _ = Describe("ManagedCRL Controller", func() {
 			)).To(Succeed())
 			Expect(k8sClient.Create(
 				ctx,
+				&cmv1.ClusterIssuer{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "test-issuer-non-ca",
+					},
+					Spec: cmv1.IssuerSpec{
+						IssuerConfig: cmv1.IssuerConfig{
+							SelfSigned: &cmv1.SelfSignedIssuer{},
+						},
+					},
+				},
+			)).To(Succeed())
+			Expect(k8sClient.Create(
+				ctx,
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "ca-key-pair",
@@ -261,6 +336,20 @@ var _ = Describe("ManagedCRL Controller", func() {
 					},
 				},
 			)).To(Succeed())
+			Expect(k8sClient.Create(
+				ctx,
+				&cmv1.Issuer{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-issuer-non-ca",
+						Namespace: testNamespace,
+					},
+					Spec: cmv1.IssuerSpec{
+						IssuerConfig: cmv1.IssuerConfig{
+							SelfSigned: &cmv1.SelfSignedIssuer{},
+						},
+					},
+				},
+			)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -273,6 +362,11 @@ var _ = Describe("ManagedCRL Controller", func() {
 			Expect(k8sClient.Delete(ctx, &cmv1.ClusterIssuer{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "test-issuer",
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Delete(ctx, &cmv1.ClusterIssuer{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-issuer-non-ca",
 				},
 			})).To(Succeed())
 		})
@@ -295,6 +389,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 				err := k8sClient.Create(ctx, managedcrl)
 				if tc.shouldError {
 					Expect(err).To(HaveOccurred())
+					Expect(err).To(MatchError(MatchRegexp(tc.errorMessage)))
 					return
 				}
 				Expect(err).ToNot(HaveOccurred())
