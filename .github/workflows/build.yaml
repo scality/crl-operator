@@ -51,7 +51,7 @@ jobs:
           echo "tags=$tags" >> $GITHUB_OUTPUT
           echo "version=$version" >> $GITHUB_OUTPUT
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args:
