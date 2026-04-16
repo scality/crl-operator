@@ -20,13 +20,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # NOTE: We explicitly set the refs otherwise the tag
           # annotations content is not fetched
           # See: https://github.com/actions/checkout/issues/882
           ref: ${{ github.ref }}
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           name: CRL Operator ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
