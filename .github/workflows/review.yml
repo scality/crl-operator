@@ -19,7 +19,7 @@ jobs:
 
   review-dependency-bump:
     # pr.user.login catches bot PRs updated by a human, where github.actor is no longer the bot.
-    if: github.event_name == 'pull_request_target' && (github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'renovate[bot]')
+    if: github.event_name == 'pull_request_target' && (github.actor == 'dependabot[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' || github.actor == 'scality-renovate[bot]' || github.event.pull_request.user.login == 'scality-renovate[bot]')
     uses: scality/workflows/.github/workflows/claude-code-dependency-review.yml@v2.8.3
     with:
       ACTIONS_APP_ID: ${{ vars.ACTIONS_APP_ID }}
