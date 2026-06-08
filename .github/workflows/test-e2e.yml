@@ -19,7 +19,7 @@ jobs:
       - name: Install kind
         env:
           # renovate: datasource=github-releases depName=kubernetes-sigs/kind
-          KIND_VERSION: v0.30.0
+          KIND_VERSION: v0.32.0
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64
           chmod +x ./kind
