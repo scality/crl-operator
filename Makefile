@@ -114,7 +114,7 @@ test: manifests generate fmt vet setup-envtest download-extra-crds ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # renovate: datasource=github-releases depName=cert-manager/cert-manager
-CERT_MANAGER_VERSION := v1.19.1
+CERT_MANAGER_VERSION := v1.21.1
 testdata/crds/cert-manager-crds.yaml:
 	@mkdir -p $(@D)
 	curl -sSLo $@ \
