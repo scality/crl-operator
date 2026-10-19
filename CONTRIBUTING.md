@@ -58,7 +58,7 @@ If none of the above was met, open an issue directly in Github, select the appro
 
 ### Prerequisites
 
-- go version v1.25.0+
+- go version v1.27.2+
 - docker
 - kubectl
 - make
