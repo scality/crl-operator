@@ -50,8 +50,10 @@ endif
 # This is useful for CI or a project to utilize a specific version of the operator-sdk toolkit.
 # renovate: datasource=github-releases depName=operator-framework/operator-sdk
 OPERATOR_SDK_VERSION ?= v1.41.1
+# REGISTRY is the registry and namespace for the operator's published images and artifacts.
+REGISTRY ?= ghcr.io/scality
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= $(REGISTRY)/crl-operator:$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -377,3 +379,47 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+##@ Flux OCI manifests
+# Everything below publishes the operator's config/ tree as an OCI artifact that Flux can
+# consume directly (OCIRepository + Kustomization). It is intentionally kept separate from the
+# operator-sdk / kubebuilder scaffolding above.
+
+# MANIFESTS_IMG is the OCI artifact repository (no tag) for the config/ bundle.
+MANIFESTS_IMG ?= $(REGISTRY)/crl-operator-manifests
+# MANIFESTS_EXTRA_TAGS are extra tags to also point at the published artifact (e.g. "latest"),
+# space-separated. They reference the SAME artifact, so - like VERSION - they pin the controller
+# image at IMG (a specific version), never a floating tag: a `latest` manifests bundle must keep
+# pinning the controller version it was built for, otherwise it would break on the next release.
+MANIFESTS_EXTRA_TAGS ?=
+
+FLUX ?= $(LOCALBIN)/flux
+# renovate: datasource=github-releases depName=fluxcd/flux2
+FLUX_VERSION ?= v2.8.8
+
+.PHONY: flux
+flux: ## Download flux CLI locally if necessary.
+ifeq (,$(wildcard $(FLUX)))
+ifeq (,$(shell which flux 2>/dev/null))
+	@{ \
+	set -e ;\
+	mkdir -p $(dir $(FLUX)) ;\
+	OS=$(shell go env GOOS) && ARCH=$(shell go env GOARCH) && \
+	curl -sSL https://github.com/fluxcd/flux2/releases/download/$(FLUX_VERSION)/flux_$(patsubst v%,%,$(FLUX_VERSION))_$${OS}_$${ARCH}.tar.gz | tar -xzf - -C $(LOCALBIN) flux ;\
+	chmod +x $(FLUX) ;\
+	}
+else
+FLUX = $(shell which flux)
+endif
+endif
+
+.PHONY: push-manifests
+push-manifests: kustomize flux ## Publish config/ as an OCI artifact for Flux, pinned to IMG (a specific version).
+	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	$(FLUX) push artifact oci://$(MANIFESTS_IMG):$(VERSION) \
+		--path=./config \
+		--source="$(shell git config --get remote.origin.url)" \
+		--revision="$(VERSION)@sha1:$(shell git rev-parse HEAD)"
+	for tag in $(MANIFESTS_EXTRA_TAGS); do \
+		$(FLUX) tag artifact oci://$(MANIFESTS_IMG):$(VERSION) --tag $$tag ; \
+	done
