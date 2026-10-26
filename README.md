@@ -83,6 +83,45 @@ make uninstall
 make undeploy
 ```
 
+### OCI manifests artifact
+
+Each build also publishes the `config/` tree as an OCI artifact
+(`ghcr.io/scality/crl-operator-manifests:<version>`), pinned to the matching
+controller image, so Flux can deploy crl-operator straight from it:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: crl-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/scality/crl-operator-manifests
+  ref:
+    tag: latest
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: crl-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  sourceRef:
+    kind: OCIRepository
+    name: crl-operator
+  path: ./default
+  prune: true
+  wait: true
+```
+
+To publish the artifact manually (e.g. from a branch build):
+
+```sh
+make push-manifests VERSION=<version>
+```
+
 ## Contributing
 
 See [contributing](CONTRIBUTING.md) for details.
