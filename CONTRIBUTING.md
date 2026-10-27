@@ -62,7 +62,7 @@ If none of the above was met, open an issue directly in Github, select the appro
 - docker
 - kubectl
 - make
-- operator-sdk
+- kubebuilder
 - Docker (for building)
 - Kind (for running e2e tests)
 
