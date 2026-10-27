@@ -28,6 +28,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 )
 
@@ -131,8 +132,11 @@ type RevocationSpec struct {
 	ReasonCode int `json:"reasonCode,omitempty"`
 }
 
-// ManagedCRLSpec defines the desired state of ManagedCRL.
+// ManagedCRLSpec defines the desired state of ManagedCRL
 type ManagedCRLSpec struct {
+	// The following markers will use OpenAPI v3 schema to validate the value
+	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+
 	// IssuerRef is a reference to the cert-manager Issuer or ClusterIssuer
 	// that will sign the CRL.
 	IssuerRef cmmetav1.ObjectReference `json:"issuerRef"`
@@ -153,6 +157,9 @@ type ManagedCRLSpec struct {
 
 // ManagedCRLStatus defines the observed state of ManagedCRL.
 type ManagedCRLStatus struct {
+	// For Kubernetes API conventions, see:
+	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+
 	// SecretReady indicates whether the CRL is built and available in the Secret.
 	SecretReady *bool `json:"secretReady,omitempty"`
 	// PodExposed indicates whether the CRL expose Pod is running.
@@ -160,8 +167,21 @@ type ManagedCRLStatus struct {
 	// IngressExposed indicates whether the CRL Ingress is available.
 	IngressExposed *bool `json:"ingressExposed,omitempty"`
 	// IssuerConfigured indicates whether the Issuer is properly configured.
-	IssuerConfigured *bool              `json:"issuerConfigured,omitempty"`
-	Conditions       []metav1.Condition `json:"conditions,omitempty"`
+	IssuerConfigured *bool `json:"issuerConfigured,omitempty"`
+	// conditions represent the current state of the ManagedCRL resource.
+	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
+	//
+	// Standard condition types include:
+	// - "SecretReady": the secret containing the CRL is ready
+	// - "PodExposed": the pod exposing the CRL is running
+	// - "IngressExposed": the ingress exposing the CRL is available
+	// - "IssuerConfigured": the issuer is properly configured
+	//
+	// The status of each condition is one of True, False, or Unknown.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// CRLValidUntil is the time until which the CRL is valid.
 	CRLValidUntil metav1.Time `json:"crlValidUntil,omitempty"`
@@ -184,26 +204,37 @@ type ManagedCRLStatus struct {
 // +kubebuilder:printcolumn:name="Expires",type=string,JSONPath=`.status.crlValidUntil`
 // +kubebuilder:printcolumn:name="CRL Number",type=integer,JSONPath=`.status.crlNumber`
 
-// ManagedCRL is the Schema for the managedcrls API.
+// ManagedCRL is the Schema for the managedcrls API
 type ManagedCRL struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.TypeMeta `json:",inline"`
 
-	Spec   ManagedCRLSpec   `json:"spec,omitempty"`
-	Status ManagedCRLStatus `json:"status,omitempty"`
+	// metadata is a standard object metadata
+	// +optional
+	metav1.ObjectMeta `json:"metadata,omitzero"`
+
+	// spec defines the desired state of ManagedCRL
+	// +required
+	Spec ManagedCRLSpec `json:"spec"`
+
+	// status defines the observed state of ManagedCRL
+	// +optional
+	Status ManagedCRLStatus `json:"status,omitzero"`
 }
 
 // +kubebuilder:object:root=true
 
-// ManagedCRLList contains a list of ManagedCRL.
+// ManagedCRLList contains a list of ManagedCRL
 type ManagedCRLList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []ManagedCRL `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&ManagedCRL{}, &ManagedCRLList{})
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(SchemeGroupVersion, &ManagedCRL{}, &ManagedCRLList{})
+		return nil
+	})
 }
 
 // IsExposed returns true if the CRL is configured to be exposed.

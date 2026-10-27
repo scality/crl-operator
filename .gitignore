@@ -39,3 +39,6 @@ go.work.sum
 *.swp
 *.swo
 *~
+
+# Kubeconfig might contain secrets
+*.kubeconfig

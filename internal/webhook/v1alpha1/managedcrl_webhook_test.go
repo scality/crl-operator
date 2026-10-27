@@ -28,17 +28,16 @@ var _ = Describe("ManagedCRL Webhook", func() {
 	var (
 		obj       *crloperatorv1alpha1.ManagedCRL
 		oldObj    *crloperatorv1alpha1.ManagedCRL
-		validator ManagedCRLCustomValidator
+		validator ManagedCRLValidator
 	)
 
 	BeforeEach(func() {
 		obj = &crloperatorv1alpha1.ManagedCRL{}
 		oldObj = &crloperatorv1alpha1.ManagedCRL{}
-		validator = ManagedCRLCustomValidator{}
+		validator = ManagedCRLValidator{}
 		Expect(validator).NotTo(BeNil(), "Expected validator to be initialized")
 		Expect(oldObj).NotTo(BeNil(), "Expected oldObj to be initialized")
 		Expect(obj).NotTo(BeNil(), "Expected obj to be initialized")
-		// TODO (user): Add any setup logic common to all tests
 	})
 
 	AfterEach(func() {

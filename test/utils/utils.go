@@ -34,6 +34,9 @@ const (
 
 	certmanagerVersion = "v1.16.3"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
+
+	defaultKindBinary  = "kind"
+	defaultKindCluster = "kind"
 )
 
 func warnError(err error) {
@@ -111,6 +114,19 @@ func UninstallCertManager() {
 	if _, err := Run(cmd); err != nil {
 		warnError(err)
 	}
+
+	// Delete leftover leases in kube-system (not cleaned by default)
+	kubeSystemLeases := []string{
+		"cert-manager-cainjector-leader-election",
+		"cert-manager-controller",
+	}
+	for _, lease := range kubeSystemLeases {
+		cmd = exec.Command("kubectl", "delete", "lease", lease,
+			"-n", "kube-system", "--ignore-not-found", "--force", "--grace-period=0")
+		if _, err := Run(cmd); err != nil {
+			warnError(err)
+		}
+	}
 }
 
 // InstallCertManager installs the cert manager bundle.
@@ -167,12 +183,16 @@ func IsCertManagerCRDsInstalled() bool {
 
 // LoadImageToKindClusterWithName loads a local docker image to the kind cluster
 func LoadImageToKindClusterWithName(name string) error {
-	cluster := "kind"
+	cluster := defaultKindCluster
 	if v, ok := os.LookupEnv("KIND_CLUSTER"); ok {
 		cluster = v
 	}
 	kindOptions := []string{"load", "docker-image", name, "--name", cluster}
-	cmd := exec.Command("kind", kindOptions...)
+	kindBinary := defaultKindBinary
+	if v, ok := os.LookupEnv("KIND"); ok {
+		kindBinary = v
+	}
+	cmd := exec.Command(kindBinary, kindOptions...)
 	_, err := Run(cmd)
 	return err
 }
@@ -181,8 +201,8 @@ func LoadImageToKindClusterWithName(name string) error {
 // according to line breakers, and ignores the empty elements in it.
 func GetNonEmptyLines(output string) []string {
 	var res []string
-	elements := strings.Split(output, "\n")
-	for _, element := range elements {
+	elements := strings.SplitSeq(output, "\n")
+	for element := range elements {
 		if element != "" {
 			res = append(res, element)
 		}
@@ -214,7 +234,7 @@ func UncommentCode(filename, target, prefix string) error {
 
 	idx := strings.Index(strContent, target)
 	if idx < 0 {
-		return fmt.Errorf("unable to find the code %q to be uncomment", target)
+		return fmt.Errorf("unable to find the code %q to be uncommented", target)
 	}
 
 	out := new(bytes.Buffer)

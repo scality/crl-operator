@@ -31,13 +31,16 @@ import (
 
 var _ = Describe("ManagedCRL Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+		const (
+			resourceName      = "test-resource"
+			resourceNamespace = "default"
+		)
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: resourceNamespace,
 		}
 		managedcrl := &crloperatorv1alpha1.ManagedCRL{}
 
@@ -48,7 +51,7 @@ var _ = Describe("ManagedCRL Controller", func() {
 				resource := &crloperatorv1alpha1.ManagedCRL{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: resourceNamespace,
 					},
 					// TODO(user): Specify other spec details if needed.
 				}

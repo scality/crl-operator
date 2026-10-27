@@ -29,7 +29,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: ManagedCRL is the Schema for the managedcrls API.
+        description: ManagedCRL is the Schema for the managedcrls API
         properties:
           apiVersion:
             description: |-
@@ -49,7 +49,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: ManagedCRLSpec defines the desired state of ManagedCRL.
+            description: spec defines the desired state of ManagedCRL
             properties:
               duration:
                 description: |-
@@ -243,9 +243,20 @@ spec:
             - issuerRef
             type: object
           status:
-            description: ManagedCRLStatus defines the observed state of ManagedCRL.
+            description: status defines the observed state of ManagedCRL
             properties:
               conditions:
+                description: |-
+                  conditions represent the current state of the ManagedCRL resource.
+                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
+
+                  Standard condition types include:
+                  - "SecretReady": the secret containing the CRL is ready
+                  - "PodExposed": the pod exposing the CRL is running
+                  - "IngressExposed": the ingress exposing the CRL is available
+                  - "IssuerConfigured": the issuer is properly configured
+
+                  The status of each condition is one of True, False, or Unknown.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -301,6 +312,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               crlNumber:
                 description: CRLNumber is the number of the CRL.
                 format: int64
@@ -344,6 +358,8 @@ spec:
                   in the Secret.
                 type: boolean
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true
