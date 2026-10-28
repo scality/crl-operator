@@ -2,12 +2,12 @@ FROM mcr.microsoft.com/devcontainers/go:1.27-trixie@sha256:8f1c83128e4bce9d745b1
 
 USER vscode
 
-# renovate: datasource=github-releases depName=operator-framework/operator-sdk extractVersion=^v(?<version>.*)$
-ARG OPERATOR_SDK_VERSION=1.42.3
+# renovate: datasource=github-releases depName=kubernetes-sigs/kubebuilder extractVersion=^v(?<version>.*)$
+ARG KUBEBUILDER_VERSION=4.6.0
 
-RUN curl -sSfLO https://github.com/operator-framework/operator-sdk/releases/download/v${OPERATOR_SDK_VERSION}/operator-sdk_linux_amd64 && \
-    chmod +x operator-sdk_linux_amd64 && \
-    sudo mv operator-sdk_linux_amd64 /usr/local/bin/operator-sdk
+RUN curl -sSfLO https://github.com/kubernetes-sigs/kubebuilder/releases/download/v${KUBEBUILDER_VERSION}/kubebuilder_linux_amd64 && \
+    chmod +x kubebuilder_linux_amd64 && \
+    sudo mv kubebuilder_linux_amd64 /usr/local/bin/kubebuilder
 
 # renovate: datasource=github-releases depName=golangci/golangci-lint extractVersion=^v(?<version>.*)$
 ARG GOLANGCI_VERSION=2.15.0
