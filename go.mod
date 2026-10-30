@@ -3,7 +3,7 @@ module github.com/scality/crl-operator
 go 1.27.2
 
 require (
-	github.com/cert-manager/cert-manager v1.19.3
+	github.com/cert-manager/cert-manager v1.19.6
 	github.com/go-logr/logr v1.4.4
 	github.com/onsi/ginkgo/v2 v2.31.0
 	github.com/onsi/gomega v1.41.0
