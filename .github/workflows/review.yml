@@ -10,7 +10,7 @@ jobs:
   review:
     # May also trigger on bump branches when a human updates them (acceptable double-review).
     if: github.event_name == 'pull_request' && github.actor != 'scality-renovate[bot]'
-    uses: scality/workflows/.github/workflows/claude-code-review.yml@v2
+    uses: scality/workflows/.github/workflows/claude-code-review.yml@284fcb6c972f27f628e342199064ba8ccd5df8c2 # v2
     secrets:
       # The review prompt is a slash command shipped by the scality-skills plugin,
       # which the shared workflow clones from the agent-hub marketplace with this
@@ -24,7 +24,7 @@ jobs:
       github.event_name == 'pull_request_target' &&
       (github.actor == 'scality-renovate[bot]' ||
        github.event.pull_request.user.login == 'scality-renovate[bot]')
-    uses: scality/workflows/.github/workflows/claude-code-dependency-review.yml@v2
+    uses: scality/workflows/.github/workflows/claude-code-dependency-review.yml@284fcb6c972f27f628e342199064ba8ccd5df8c2 # v2
     with:
       ACTIONS_APP_ID: ${{ vars.ACTIONS_APP_ID }}
     secrets:
