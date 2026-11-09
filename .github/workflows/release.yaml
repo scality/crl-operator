@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   release:
-    uses: scality/workflows/.github/workflows/release.yaml@7d91dc4ebbe136b54518aa42a1ad6014f8f91526 # v2.9.1
+    uses: scality/workflows/.github/workflows/release.yaml@91619d883650e6238f517757f7b978757c2cb086 # v2.12.1
     with:
       version-type: ${{ inputs.version-type }}
       version-scope: ${{ inputs.version-scope }}
