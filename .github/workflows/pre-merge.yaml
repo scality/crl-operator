@@ -53,3 +53,20 @@ jobs:
   test-e2e:
     uses: ./.github/workflows/test-e2e.yml
     secrets: inherit
+
+  pre-merge:
+    name: Pre Merge
+    # Single check for rulesets to require: GitHub reports one check per job, never one per workflow
+    # always(): a job skipped because a dependency failed reports success and would let the PR merge
+    if: always()
+    needs:
+      - build
+      - generate
+      - lint
+      - test
+      - test-e2e
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail if a pre-merge job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
