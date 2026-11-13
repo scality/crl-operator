@@ -139,7 +139,7 @@ type ManagedCRLSpec struct {
 
 	// IssuerRef is a reference to the cert-manager Issuer or ClusterIssuer
 	// that will sign the CRL.
-	IssuerRef cmmetav1.ObjectReference `json:"issuerRef"`
+	IssuerRef cmmetav1.IssuerReference `json:"issuerRef"`
 
 	// Duration is the duration for which the CRL is valid.
 	// (default: 168h = 7 days)
