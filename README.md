@@ -23,7 +23,7 @@ resources from cert-manager to include CRL distribution points.
 ## Getting Started
 
 ### Prerequisites
-- go version v1.27.2+
+- Go, at the version in `go.mod`
 - docker
 - kubectl
 - Access to a Kubernetes v1.32+ cluster
